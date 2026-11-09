@@ -6,10 +6,10 @@ import {Panel, Pill, Skeleton} from './components/panels';
 import {ago} from './lib/format';
 
 type UpdateState = {
-  current: string; repo: string; sourceCheckout: boolean; method: 'release' | 'git'; blocked: string | null; autoCheck: boolean;
+  current: string; instance: string; repo: string; sourceCheckout: boolean; method: 'release' | 'git'; blocked: string | null; autoCheck: boolean;
   latest: {version: string; name: string; notes: string; url: string; publishedAt: string} | null;
   available: boolean; checkedAt: number | null; error: string | null;
-  job: {state: 'downloading' | 'installing' | 'failed'; version: string; at: number; error?: string; log?: string} | null;
+  job: {state: 'downloading' | 'installing' | 'done' | 'failed'; version: string; at: number; error?: string; log?: string} | null;
   rootIntegration: {installed: boolean; outdated: string[]; command?: string};
 };
 
@@ -29,7 +29,7 @@ export default function UpdatePanel({token, now, autoStart = 0}: {token?: string
   const [u, setU] = useState<UpdateState | null>(null);
   const [busy, setBusy] = useState<'check' | 'apply' | null>(null);
   const [waitingFor, setWaitingFor] = useState<string | null>(null); // version we expect after the restart
-  const startedFrom = useRef<string | null>(null);
+  const startedFrom = useRef<string | null>(null); // server instance the update started on
 
   const load = useCallback(async () => {
     try {
@@ -38,9 +38,9 @@ export default function UpdatePanel({token, now, autoStart = 0}: {token?: string
       const j: UpdateState = await r.json();
       setU(j);
       // An update started elsewhere (top bar, another tab) is running: follow it to the restart.
-      if (!startedFrom.current && (j.job?.state === 'installing' || j.job?.state === 'downloading')) { startedFrom.current = j.current; setWaitingFor(j.job.version); }
-      // The server restarted on the new version: reload so the new dashboard code is used too.
-      if (startedFrom.current && j.current !== startedFrom.current) {
+      if (!startedFrom.current && (j.job?.state === 'installing' || j.job?.state === 'downloading')) { startedFrom.current = j.instance; setWaitingFor(j.job.version); }
+      // A new server process answered: the update restarted Homebase. Reload so the new dashboard code is used too.
+      if (startedFrom.current && j.instance !== startedFrom.current) {
         toast.success(`Updated to Homebase ${j.current}`);
         setTimeout(() => window.location.reload(), 800);
       }
@@ -81,7 +81,7 @@ export default function UpdatePanel({token, now, autoStart = 0}: {token?: string
     if (!ok) return;
     setBusy('apply');
     try {
-      startedFrom.current = u.current;
+      startedFrom.current = u.instance;
       setWaitingFor(u.latest.version);
       setU(await post(token, 'apply'));
     } catch (e) {

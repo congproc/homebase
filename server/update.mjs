@@ -42,7 +42,9 @@ export function compareVersions(a, b) {
 }
 
 let latest = null, checkedAt = 0, checkError = null, checking = null;
-let job = null; // {state: 'downloading'|'installing'|'failed', version, at, error?}
+let job = null; // {state: 'downloading'|'installing'|'done'|'failed', version, at, error?}
+// Changes on every start, so the page can tell the restart happened even when the version did not change.
+const INSTANCE = `${process.pid}-${Date.now()}`;
 
 async function fetchLatest() {
   const r = await fetch(API, {headers: {Accept: 'application/vnd.github+json', 'User-Agent': `homebase/${VERSION}`}, signal: AbortSignal.timeout(10000)});
@@ -99,10 +101,11 @@ export async function updateStatus() {
     const log = await logTail();
     const exit = log.match(/^homebase-update-exit=(\d+)$/m);
     if (exit && exit[1] !== '0') job = {...job, state: 'failed', error: 'The installer failed; the previous version is still running.'};
+    else if (exit) job = {...job, state: 'done'};
     else if (Date.now() - job.at > 5 * 60 * 1000) job = {...job, state: 'failed', error: 'The update did not finish within 5 minutes.'};
   }
   return {
-    current: VERSION, repo: REPO, sourceCheckout: SOURCE_CHECKOUT, method: SOURCE_CHECKOUT ? 'git' : 'release', autoCheck: config.updates.check,
+    current: VERSION, instance: INSTANCE, repo: REPO, sourceCheckout: SOURCE_CHECKOUT, method: SOURCE_CHECKOUT ? 'git' : 'release', autoCheck: config.updates.check,
     blocked: SOURCE_CHECKOUT ? await gitBlocker() : null,
     latest: latest && {version: latest.version, name: latest.name, notes: latest.notes, url: latest.url, publishedAt: latest.publishedAt},
     available: updateAvailable(),
@@ -141,7 +144,7 @@ async function applyGit(version) {
 }
 
 export async function applyUpdate() {
-  if (job && job.state !== 'failed') throw Error('An update is already in progress');
+  if (job && (job.state === 'downloading' || job.state === 'installing')) throw Error('An update is already in progress');
   await checkForUpdate(true);
   if (!latest) throw Error(checkError || 'Could not reach GitHub');
   if (compareVersions(latest.version, VERSION) <= 0) throw Error(`Already on the latest version (${VERSION})`);
