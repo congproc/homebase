@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+CHECK="/usr/local/sbin/server-smart-sleep"
+
+log() {
+    echo "$*"
+    logger -t server-night-sleep "$*"
+}
+
+# Re-mask the sleep targets after resume only if they were masked before (always-on servers mask them).
+WAS_MASKED=0
+if [ "$(systemctl is-enabled sleep.target 2>/dev/null || true)" = "masked" ]; then
+    WAS_MASKED=1
+fi
+
+restore_server_policy() {
+    if [ "$WAS_MASKED" -eq 1 ]; then
+        log "Restoring server sleep masks"
+        systemctl mask sleep.target suspend.target >/dev/null 2>&1 || true
+    fi
+    rtcwake -m disable >/dev/null 2>&1 || true
+}
+
+next_5am_epoch() {
+    now="$(date +%s)"
+    wake="$(date -d "today ${WAKE_TIME}:00" +%s)"
+
+    if [ "$wake" -le "$now" ]; then
+        wake="$(date -d "tomorrow ${WAKE_TIME}:00" +%s)"
+    fi
+
+    echo "$wake"
+}
+
+echo "=== NIGHT SLEEP CONTROLLER ==="
+echo "Time: $(date)"
+echo
+
+if ! "$CHECK"; then
+    log "Server is busy. Skipping nightly suspend."
+    exit 0
+fi
+
+# HOMEBASE POWER INTEGRATION
+WAKE_TIME="$(/usr/local/sbin/homebase-power wake-time)"
+WAKE_EPOCH="$(next_5am_epoch)"
+WAKE_HUMAN="$(date -d "@$WAKE_EPOCH" '+%Y-%m-%d %H:%M:%S %Z')"
+
+echo
+echo "Smart check passed."
+echo "Planned wake: $WAKE_HUMAN"
+
+if [ "${1:-}" = "--dry-run" ]; then
+    echo
+    echo "DRY RUN ONLY"
+    echo "Would program RTC alarm for: $WAKE_HUMAN"
+    echo "Would temporarily unmask:"
+    echo "  sleep.target"
+    echo "  suspend.target"
+    echo "Would then suspend."
+    echo "Would restore masks immediately after resume."
+    exit 0
+fi
+
+trap restore_server_policy EXIT HUP INT TERM
+
+log "Programming RTC wake for $WAKE_HUMAN"
+
+rtcwake \
+    -m no \
+    -t "$WAKE_EPOCH"
+
+log "Temporarily allowing suspend"
+
+if [ "$WAS_MASKED" -eq 1 ]; then
+    systemctl unmask sleep.target suspend.target
+fi
+
+sync
+
+log "Suspending server"
+
+# Wait for the target's full suspend/resume transaction. The `suspend`
+# convenience command is asynchronous and would let the EXIT trap restore the
+# masks before logind starts suspend.target.
+systemctl start --wait suspend.target
+
+log "Server resumed"

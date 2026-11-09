@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+
+set -u
+
+# The account Homebase runs as (written by system/install-power.py).
+USER_NAME="$(cat /etc/homebase/owner 2>/dev/null || true)"
+if [ -n "$USER_NAME" ]; then
+    HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+else
+    HOME_DIR=/nonexistent
+fi
+STATE_DIR="$HOME_DIR/.local/state/server"
+OVERRIDE="$STATE_DIR/stay-awake-tonight"
+
+busy=0
+reasons=()
+
+mark_busy() {
+    busy=1
+    reasons+=("$1")
+}
+
+echo "=== SMART SLEEP CHECK ==="
+echo "Time: $(date)"
+echo
+
+# HOMEBASE POWER INTEGRATION
+POWER=/usr/local/sbin/homebase-power
+if service_reasons="$("$POWER" check-services 2>&1)"; then
+    :
+else
+    mark_busy "$service_reasons"
+fi
+# A configuration read error keeps the original conservative blocker enabled.
+power_blocks() {
+    local code=0
+    "$POWER" flag "$1" || code=$?
+    [ "$code" -ne 1 ]
+}
+
+if [ -e "$OVERRIDE" ]; then
+    mark_busy "Manual stay-awake override is set"
+fi
+
+blockers="$(
+    systemd-inhibit \
+        --list \
+        --what=sleep \
+        --mode=block \
+        --no-legend \
+        --no-pager 2>/dev/null || true
+)"
+
+if [ -n "$blockers" ]; then
+    mark_busy "A blocking systemd sleep inhibitor exists"
+    echo "--- Blocking inhibitors ---"
+    echo "$blockers"
+    echo
+fi
+
+transfer_found=0
+
+for proc in rsync rclone scp sftp borg restic; do
+    if pgrep -x "$proc" >/dev/null 2>&1; then
+        if [ "$transfer_found" -eq 0 ]; then
+            echo "--- Active transfer/backup processes ---"
+            transfer_found=1
+        fi
+
+        pgrep -af "$proc" || true
+        mark_busy "Transfer/backup process active: $proc"
+    fi
+done
+
+if [ "$transfer_found" -eq 1 ]; then
+    echo
+fi
+
+gpu_jobs="$(
+    nvidia-smi \
+        --query-compute-apps=pid,process_name,used_memory \
+        --format=csv,noheader 2>/dev/null |
+    sed '/^[[:space:]]*$/d'
+)"
+
+if [ -n "$gpu_jobs" ]; then
+    echo "--- Active NVIDIA compute jobs ---"
+    echo "$gpu_jobs"
+    echo
+    mark_busy "NVIDIA/CUDA compute job active"
+fi
+
+# AMD (amdgpu) and Intel (i915/xe) GPU load from sysfs, sampled over 3 seconds.
+# amdgpu: average of gpu_busy_percent; Intel: share of time not in idle (RC6) residency.
+GPU_BUSY_PCT=30
+declare -A amd_sum=() intel_idle0=() gpu_drv=()
+for dev in /sys/bus/pci/devices/*; do
+    case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+    drv="$(readlink "$dev/driver" 2>/dev/null)"
+    drv="${drv##*/}"
+    case "$drv" in
+        amdgpu)
+            [ -r "$dev/gpu_busy_percent" ] && { gpu_drv[$dev]=$drv; amd_sum[$dev]=0; } ;;
+        i915|xe)
+            for f in "$dev/tile0/gt0/gtidle/idle_residency_ms" "$dev"/drm/card*/gt/gt0/rc6_residency_ms "$dev"/drm/card*/power/rc6_residency_ms; do
+                if [ -r "$f" ]; then gpu_drv[$dev]=$drv; intel_idle0[$dev]="$f $(cat "$f")"; break; fi
+            done ;;
+    esac
+done
+
+if [ "${#gpu_drv[@]}" -gt 0 ]; then
+    for _ in 1 2 3; do
+        for dev in "${!amd_sum[@]}"; do
+            amd_sum[$dev]=$(( amd_sum[$dev] + $(cat "$dev/gpu_busy_percent" 2>/dev/null || echo 0) ))
+        done
+        sleep 1
+    done
+    for dev in "${!gpu_drv[@]}"; do
+        if [ -n "${amd_sum[$dev]+x}" ]; then
+            load=$(( amd_sum[$dev] / 3 ))
+        else
+            read -r f idle0 <<< "${intel_idle0[$dev]}"
+            idle1="$(cat "$f" 2>/dev/null || echo "$idle0")"
+            load=$(( 100 - (idle1 - idle0) * 100 / 3000 ))
+            [ "$load" -lt 0 ] && load=0
+        fi
+        echo "GPU ${dev##*/} (${gpu_drv[$dev]}): ${load}% busy"
+        if [ "$load" -ge "$GPU_BUSY_PCT" ]; then
+            mark_busy "GPU ${dev##*/} (${gpu_drv[$dev]}) ${load}% busy"
+        fi
+    done
+    echo
+fi
+
+tmux_cmds="$(
+    [ -n "$USER_NAME" ] && runuser -u "$USER_NAME" -- \
+        tmux list-panes -a \
+        -F '#{session_name}|#{window_index}|#{pane_index}|#{pane_current_command}' \
+        2>/dev/null || true
+)"
+
+if power_blocks blockTmux && [ -n "$tmux_cmds" ]; then
+    tmux_busy=0
+
+    while IFS='|' read -r session window pane command; do
+        case "$command" in
+            bash|zsh|sh|fish|"")
+                ;;
+            *)
+                if [ "$tmux_busy" -eq 0 ]; then
+                    echo "--- Busy tmux panes ---"
+                    tmux_busy=1
+                fi
+
+                echo "$session:$window.$pane -> $command"
+                mark_busy "Non-shell process running inside tmux"
+                ;;
+        esac
+    done <<< "$tmux_cmds"
+
+    if [ "$tmux_busy" -eq 1 ]; then
+        echo
+    fi
+fi
+
+ssh_sessions="$(
+    ss -Htn state established '( sport = :22 )' 2>/dev/null || true
+)"
+
+if power_blocks blockSsh && [ -n "$ssh_sessions" ]; then
+    ssh_count="$(printf '%s\n' "$ssh_sessions" | grep -c . || true)"
+
+    echo "--- Active SSH connections ---"
+    echo "$ssh_sessions"
+    echo
+    mark_busy "$ssh_count active SSH connection(s)"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+    docker_stats="$(
+        docker stats \
+            --no-stream \
+            --format '{{.CPUPerc}}|{{.Name}}' \
+            2>/dev/null || true
+    )"
+
+    docker_busy=0
+
+    while IFS='|' read -r percent name; do
+        [ -n "$percent" ] || continue
+
+        value="${percent%\%}"
+
+        if awk -v x="$value" 'BEGIN { exit !(x >= 10.0) }'; then
+            if [ "$docker_busy" -eq 0 ]; then
+                echo "--- Busy Docker containers (>=10% CPU) ---"
+                docker_busy=1
+            fi
+
+            echo "$name -> $percent"
+            mark_busy "Docker container using >=10% CPU"
+        fi
+    done <<< "$docker_stats"
+
+    if [ "$docker_busy" -eq 1 ]; then
+        echo
+    fi
+fi
+
+read_cpu() {
+    read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+
+    total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+    idle_total=$((idle + iowait))
+
+    echo "$total $idle_total"
+}
+
+DEFAULT_IFACE="$(
+    ip route show default 2>/dev/null |
+    awk 'NR==1 {print $5}'
+)"
+
+read -r cpu_total_1 cpu_idle_1 <<< "$(read_cpu)"
+
+if [ -n "$DEFAULT_IFACE" ] &&
+   [ -r "/sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes" ]; then
+
+    rx1="$(cat "/sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes")"
+    tx1="$(cat "/sys/class/net/$DEFAULT_IFACE/statistics/tx_bytes")"
+else
+    rx1=0
+    tx1=0
+fi
+
+sleep 5
+
+read -r cpu_total_2 cpu_idle_2 <<< "$(read_cpu)"
+
+cpu_delta=$((cpu_total_2 - cpu_total_1))
+idle_delta=$((cpu_idle_2 - cpu_idle_1))
+
+if [ "$cpu_delta" -gt 0 ]; then
+    cpu_busy="$(
+        awk -v total="$cpu_delta" -v idle="$idle_delta" \
+            'BEGIN { printf "%.1f", 100 * (total-idle) / total }'
+    )"
+else
+    cpu_busy="0.0"
+fi
+
+echo "CPU busy over 5 sec: ${cpu_busy}%"
+
+if awk -v x="$cpu_busy" 'BEGIN { exit !(x >= 15.0) }'; then
+    mark_busy "System CPU usage >=15%"
+fi
+
+if [ -n "$DEFAULT_IFACE" ] &&
+   [ -r "/sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes" ]; then
+
+    rx2="$(cat "/sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes")"
+    tx2="$(cat "/sys/class/net/$DEFAULT_IFACE/statistics/tx_bytes")"
+
+    network_mib="$(
+        awk \
+            -v bytes="$(( (rx2-rx1) + (tx2-tx1) ))" \
+            'BEGIN { printf "%.2f", bytes / 5 / 1024 / 1024 }'
+    )"
+
+    echo "Network ($DEFAULT_IFACE): ${network_mib} MiB/s"
+
+    if awk -v x="$network_mib" 'BEGIN { exit !(x >= 1.0) }'; then
+        mark_busy "Network traffic >=1 MiB/s"
+    fi
+fi
+
+echo
+
+if [ "$busy" -eq 0 ]; then
+    echo "RESULT: SAFE TO SLEEP"
+    exit 0
+fi
+
+echo "RESULT: BUSY - DO NOT SLEEP"
+echo
+
+printf ' - %s\n' "${reasons[@]}"
+
+exit 1

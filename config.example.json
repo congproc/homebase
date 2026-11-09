@@ -1,0 +1,13 @@
+{
+  "port": 8787,
+  "services": {
+    "user:homebase.service": {"name": "Homebase", "description": "Your server dashboard"},
+    "system:ollama.service": {"name": "Ollama", "description": "Local model server", "port": 11434}
+  },
+  "hiddenUnits": [],
+  "traffic": {
+    "logDir": "~/.local/state/homebase-sites",
+    "controlFile": "~/.config/homebase/access-control.json",
+    "sites": []
+  }
+}

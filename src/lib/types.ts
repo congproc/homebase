@@ -1,0 +1,47 @@
+export type Point = {at: number; cpu: number; memory: number; download: number; upload: number; gpu?: number | null; vram?: number | null};
+export type GpuProc = {pid: number; name: string; memory: number; utilization: number | null};
+export type GpuPoint = {at: number; utilization: number | null; memory: number | null; temperature: number | null; power: number | null};
+export type Gpu = {
+  id: string; index: number; name: string; vendor: 'nvidia' | 'amd' | 'intel'; kind: 'discrete' | 'integrated';
+  driver: string | null; driverVersion: string | null; pstate: string | null; note?: string;
+  utilization: number | null; utilizationSource?: 'idle-residency'; memoryUtilization: number | null;
+  memory: {used: number; total: number; percent: number} | null;
+  temperature: number | null; power: number | null; powerLimit: number | null; fan: number | null; fanRpm: number | null; clock: number | null; clockMax: number | null;
+  processes: GpuProc[];
+  history: GpuPoint[];
+};
+export type Container = {ID: string; Names: string; Image: string; State: string; Status: string; Ports?: string; RunningFor?: string};
+export type Session = {name: string; windows: number; attached: number; created: number};
+export type Proc = {pid: number; name: string; cpu: number; memory: number; elapsed: number};
+export type Agent = {name: string; installed?: boolean; processes?: Proc[]};
+export type Model = {name: string; size: number; size_vram: number};
+export type SleepInfo = {awake: number; asleep: number; bootAt: number; count: number; periods: {from: number; to: number}[]};
+export type Status = {
+  at: number;
+  sleep?: SleepInfo;
+  hostname: string;
+  user?: string;
+  platform: string;
+  cpuModel?: string;
+  cores: number;
+  cpu: number;
+  memory: {used: number; total: number; percent: number};
+  disk: {used: number; total: number; percent: number} | null;
+  uptime: number;
+  load: number[];
+  network: Point;
+  history: Point[];
+  interfaces: {name: string; address: string}[];
+  containers: {available: boolean; error?: string; items: Container[]};
+  sessions: {available: boolean; error?: string; items: Session[]};
+  agents: Agent[];
+  models: Model[];
+  ollamaOnline: boolean;
+  processes: Proc[];
+  gpu?: {available: boolean; error?: string; items: Gpu[]};
+  events: {message: string; at: number}[];
+  token: string;
+  alertsUnread?: number;
+};
+
+export type Level = 'ok' | 'warn' | 'critical' | 'offline' | 'pending';

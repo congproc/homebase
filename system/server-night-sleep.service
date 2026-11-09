@@ -1,0 +1,6 @@
+[Unit]
+Description=Smart nightly server suspend
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/server-night-sleep

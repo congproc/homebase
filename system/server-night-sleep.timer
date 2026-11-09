@@ -1,0 +1,12 @@
+[Unit]
+Description=Try smart server suspend at 00:30
+
+[Timer]
+OnCalendar=*-*-* 00:30:00
+AccuracySec=1min
+Persistent=false
+Unit=server-night-sleep.service
+
+[Install]
+WantedBy=timers.target
+
