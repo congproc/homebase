@@ -29,8 +29,8 @@ Upgrade later with `cd homebase && git pull && ./install.sh` (settings are kept)
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.3.0.tar.gz.sha256
-tar xzf homebase-1.3.0.tar.gz && cd homebase-1.3.0
+sha256sum -c homebase-1.3.1.tar.gz.sha256
+tar xzf homebase-1.3.1.tar.gz && cd homebase-1.3.1
 ./install.sh --linger
 ```
 
