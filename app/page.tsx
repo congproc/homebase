@@ -10,6 +10,7 @@ import {Toaster, toast} from 'sonner';
 import {ConfirmProvider, useConfirm} from '../src/components/confirm';
 import PowerPanel from '../src/PowerPanel';
 import TrafficPanel from '../src/TrafficPanel';
+import UpdatePanel from '../src/UpdatePanel';
 import {registerMonitoringTool} from '../src/webmcp';
 import {LogoMark, useStatusFavicon} from '../src/components/logo';
 import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, StatCards, TmuxPanel} from '../src/components/panels';
@@ -212,7 +213,9 @@ function Home() {
             <span className="avatar">{(d?.user || '·').replace(/[^a-zA-Z0-9]+/g, ' ').trim().split(' ').slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '·'}</span>
             <div><strong>{d?.user || 'Local administrator'}</strong><small>{typeof window !== 'undefined' && window.location.hostname.endsWith('.ts.net') ? 'via Tailscale' : '127.0.0.1 · this machine'}</small></div>
           </div>
-          <div className="version"><span>Homebase v1.2</span><span>LOCAL</span></div>
+          <div className="version"><span>Homebase {d?.version ? `v${d.version}` : ''}</span>{d?.updateAvailable
+            ? <button className="version-update" onClick={() => setPage('Hosts')} title="A newer Homebase is available">UPDATE</button>
+            : <span>LOCAL</span>}</div>
         </SidebarFooter>
       </Sidebar>
 
@@ -276,7 +279,7 @@ function Home() {
             <EventsPanel d={d} now={now} />
           </>}
           {page === 'Resources' && <><GpuPanel d={d} /><ProcessesPanel d={d} /></>}
-          {page === 'Hosts' && <HostDetails d={d} uptime={uptime} />}
+          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} /><HostDetails d={d} uptime={uptime} /></>}
           {page === 'Containers' && containersPanel(true)}
           {page === 'Tmux sessions' && tmuxPanel(true)}
           {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} /><ModelsPanel d={d} /></>}

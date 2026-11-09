@@ -4,6 +4,7 @@ import {getPowerState,savePowerSettings} from './services.mjs';
 import {getTraffic,updateControl} from './traffic.mjs';
 import {checkAlerts,getAlerts,unreadAlerts,updateAlerts} from './alerts.mjs';
 import {readGpus} from './gpu.mjs';
+import {VERSION,applyUpdate,checkForUpdate,startUpdateChecks,updateAvailable,updateStatus} from './update.mjs';
 import {tmuxNew,tmuxKill,serviceAction,startAgent,stopAgent,SESSION_NAME} from './actions.mjs';
 import http from 'node:http';
 import os from 'node:os';
@@ -54,6 +55,7 @@ async function collect(){
 await checkAlerts();setInterval(()=>{checkAlerts();},20000).unref();
 // Idle pause: only collect while a dashboard has asked for status recently. Hidden tabs stop polling, so they count as idle.
 const IDLE_AFTER=20000;let lastViewed=0;
+startUpdateChecks();
 await collect();setInterval(()=>{
  if(Date.now()-lastViewed>IDLE_AFTER)return;
  collect().catch(()=>{});
@@ -77,11 +79,17 @@ const server=http.createServer(async(req,res)=>{
  if(req.method==='GET'&&url.pathname==='/api/power')return send(res,200,await getPowerState());
  if(req.method==='GET'&&url.pathname==='/api/alerts'){await checkAlerts();return send(res,200,await getAlerts());}
  if(req.method==='GET'&&url.pathname==='/api/traffic')return send(res,200,await getTraffic(url.searchParams.get('site')||undefined,url.searchParams.get('range')||undefined));
- if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,token,alertsUnread:await unreadAlerts().catch(()=>0)});
- if(req.method==='POST'&&['/api/action','/api/power','/api/traffic/control','/api/alerts'].includes(url.pathname)){
+ if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,token,version:VERSION,updateAvailable:updateAvailable(),alertsUnread:await unreadAlerts().catch(()=>0)});
+ if(req.method==='GET'&&url.pathname==='/api/update')return send(res,200,await updateStatus());
+ if(req.method==='POST'&&['/api/action','/api/power','/api/traffic/control','/api/alerts','/api/update'].includes(url.pathname)){
  const supplied=Buffer.from(String(req.headers['x-server-token']||''));const expected=Buffer.from(token);if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected))return send(res,403,{error:'Refresh the dashboard and try again'});
  if(!/^application\/json\b/i.test(req.headers['content-type']||''))return send(res,415,{error:'Expected application/json'});
  let body='';for await(const chunk of req){body+=chunk;if(body.length>32768)return send(res,413,{error:'Request too large'});}let payload;try{payload=JSON.parse(body)}catch{return send(res,400,{error:'Invalid JSON'})}
+ if(url.pathname==='/api/update'){try{
+  if(payload.action==='check'){await checkForUpdate(true);return send(res,200,await updateStatus());}
+  if(payload.action==='apply'){const st=await applyUpdate();record(`Updating Homebase to ${st.job?.version}`);return send(res,200,st);}
+  return send(res,400,{error:'Unsupported action'});
+ }catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/alerts'){try{return send(res,200,await updateAlerts(payload))}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/traffic/control'){try{const c=await updateControl(payload);const {action,sid,ip}=payload;record(`traffic: ${action} ${sid||ip}`);return send(res,200,c)}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/power'){try{const power=await savePowerSettings(payload);record('Sleep settings updated');return send(res,200,power)}catch(e){return send(res,400,{error:e.message})}}

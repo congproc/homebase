@@ -24,7 +24,7 @@ cd homebase
 ./install.sh --linger          # copy to ~/.local/share/homebase, start it, and start at boot
 ```
 
-Upgrade later with `cd homebase && git pull && ./install.sh` (settings are kept).
+Upgrade later from the dashboard (**Hosts → Homebase → Update**), or with `cd homebase && git pull && ./install.sh` (settings are kept).
 
 Or from a release tarball (Releases page):
 
@@ -86,6 +86,7 @@ Machine-specific settings live in `~/.config/homebase/config.json` (or `$HOMEBAS
     "user:shop.service": {"name": "Shop", "port": 8790, "probe": "tcp"} // tcp: don't log a probe as a visitor
   },
   "hiddenUnits": ["cloud-init"],                  // unit-name prefixes to leave out of Hosted services
+  "updates": {"check": true},                     // look for new releases on GitHub (Hosts → Homebase)
   "tailscale": {"origin": "https://host.tailnet.ts.net:8443", "login": "you@example.com"},
   "traffic": {
     "logDir": "~/.local/state/homebase-sites",    // where your sites write <prefix>-YYYY-MM-DD.jsonl
@@ -111,6 +112,7 @@ Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `
 ## Features
 
 - **Overview / Resources:** live CPU, memory, disk, network every 5 s with a 15-minute history (paused while no dashboard is open; gaps are shown as breaks), health summary, top processes.
+- **Updates:** **Hosts → Homebase** shows the installed version and checks GitHub for a newer release (at start and every 12 h; set `"updates": {"check": false}` in the config to turn that off — then only *Check now* contacts GitHub). *Update* downloads the release, verifies its SHA-256 and runs its `install.sh` in a separate systemd unit, then the dashboard restarts and reloads itself; settings are kept. The installer log is `~/.local/state/homebase/update.log`. Source checkouts are not self-updated (use `git pull && ./install.sh --in-place`). When the root-installed sleep scripts differ from the running version, the panel shows the `sudo` command that refreshes them.
 - **GPU:** NVIDIA (via `nvidia-smi`), AMD (`amdgpu`) and Intel integrated or Arc (`i915` / `xe`) — utilization, VRAM, temperature, power, fan and clocks where the driver exposes them, a 15-minute chart per GPU, and the processes using it. AMD/Intel readings come straight from sysfs without root; Intel utilization is the share of time the GPU was out of its idle (RC6) state, and per-process use (DRM fdinfo) covers processes of the account running Homebase. Integrated GPUs share system memory, so no VRAM is shown for them.
 - **Hosts:** machine details, sleep periods since boot, interfaces.
 - **Containers:** start, stop, restart, last 80 log lines (stop/restart confirm first).

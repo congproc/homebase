@@ -41,6 +41,8 @@ export type Status = {
   gpu?: {available: boolean; error?: string; items: Gpu[]};
   events: {message: string; at: number}[];
   token: string;
+  version?: string;
+  updateAvailable?: boolean;
   alertsUnread?: number;
 };
 

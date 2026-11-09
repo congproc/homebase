@@ -141,6 +141,33 @@ kbd {
 }
 .version { display: flex; justify-content: space-between; padding: 4px 14px 10px; font-size: 11px; color: #595d65; }
 .version span:last-child { letter-spacing: 1px; }
+.version-update { font: inherit; letter-spacing: 1px; color: #17200f; background: var(--lime); border: 0; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+.update-panel { margin-bottom: 20px; }
+.update-body { padding: 0 20px 18px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.update-row > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.update-row strong { font-weight: 500; }
+.update-row small { color: var(--text-3); font-size: 12px; }
+.update-panel a { color: var(--text-2); text-decoration: underline; text-underline-offset: 2px; }
+.update-panel a svg { display: inline; vertical-align: -1px; }
+.warn-text { color: var(--amber); }
+.update-note { display: flex; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 8px; background: var(--amber-bg); color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.update-note > svg { color: var(--amber); flex-shrink: 0; margin-top: 2px; }
+.update-note.info { background: var(--surface-2); }
+.update-note.info > svg { color: var(--lime); }
+.update-note > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.update-note strong { color: var(--text); font-weight: 500; }
+.update-note pre, .update-notes pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); max-height: 220px; overflow: auto; }
+.update-note code, .update-cmd code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.update-cmd { display: flex; align-items: center; gap: 8px; background: var(--bg); border-radius: 6px; padding: 6px 8px; }
+.update-cmd .icon-button { background: none; border: 0; color: var(--text-3); cursor: pointer; padding: 2px; display: grid; }
+.update-cmd .icon-button:hover { color: var(--text); }
+.update-notes { width: 100%; font-size: 12.5px; color: var(--text-2); }
+.update-notes summary { cursor: pointer; }
+.update-notes pre { margin-top: 8px; padding: 10px 12px; background: var(--bg); border-radius: 8px; }
+.update-ok { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.update-ok svg { color: var(--lime); }
+@media (max-width: 640px) { .update-body { padding: 0 14px 14px; } .update-body > .button { width: 100%; justify-content: center; } }
 
 /* ============ topbar ============ */
 .main { min-width: 0; width: 100%; background: var(--bg); }

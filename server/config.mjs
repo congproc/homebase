@@ -59,6 +59,8 @@ export const config = Object.freeze({
     logDir: expand(file.traffic?.logDir) || path.join(home, '.local/state/homebase-sites'),
     controlFile: expand(file.traffic?.controlFile) || path.join(home, '.config/homebase/access-control.json'),
   },
+  /** In-app updates: check GitHub for a newer release (no data is sent besides the request itself). */
+  updates: {check: file.updates?.check !== false},
   powerHelper: '/usr/local/sbin/homebase-power',
   setupCommand: `sudo python3 ${path.join(ROOT, 'system', 'install-power.py')} --user ${os.userInfo().username}`,
 });
