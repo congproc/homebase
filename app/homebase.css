@@ -1035,3 +1035,41 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
   .search-box input { font-size: 16px; } /* stops iOS zooming into the field */
   button, a { -webkit-tap-highlight-color: transparent; }
 }
+
+/* ============ phones: remaining tabs ============ */
+.show-sm { display: none; }
+@media (max-width: 640px) {
+  .show-sm { display: inline; }
+  .eyebrow { display: none; } /* the top bar already names the page */
+
+  /* Label and value on one row; long values wrap underneath, right-aligned. */
+  .detail-list > div { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; padding: 10px 0; }
+  .detail-list dd { text-align: right; margin-left: auto; }
+  .detail-list.compact > div { padding: 7px 0; }
+
+  /* Metric tiles (GPU, drives): tighter so the chart is reachable without a long scroll. */
+  .gpu-metrics { gap: 6px; }
+  .gpu-metrics > div { padding: 8px 10px; gap: 2px; }
+  .gpu-metrics strong { font-size: 13.5px; }
+
+  /* Hosted services summary: one row of three instead of three stacked cards. */
+  .power-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .power-summary > div { flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; }
+  .summary-icon { width: 30px; height: 30px; border-radius: 8px; }
+  .summary-icon svg { width: 15px; height: 15px; }
+  .power-summary strong { font-size: 18px; }
+  .power-summary strong small { font-size: 12px; }
+  .power-summary span { font-size: 11.5px; line-height: 1.35; display: block; }
+  .hosted-service { padding: 14px; }
+
+  /* Sleep settings: the save bar only appears once something changed. */
+  .save-settings:not(.dirty) { display: none; }
+  .sleep-schedule { padding: 18px 16px 14px; }
+  .fixed-safeguards { margin: 4px 14px 16px; padding: 12px; }
+  .setting-row { padding: 14px 16px; }
+  .schedule-inputs { padding: 4px 16px 16px; }
+  .schedule-inputs input { max-width: none; }
+
+  .session-open { padding-left: 16px; }
+  .tr-stat { min-height: 0; }
+}

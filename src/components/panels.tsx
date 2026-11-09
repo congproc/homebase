@@ -130,7 +130,7 @@ export function ActivityPanel({d}: {d: Status | null}) {
         <div><small>Peak</small><strong>{main.length ? <Num value={peak} format={fmt} /> : '—'}</strong></div>
         <div className="chart-legend">{series.map(s => <span key={s.label}><i style={{background: s.color}} />{s.label}</span>)}</div>
       </div>
-      <AreaChart series={series} times={times} max={metric === 'network' ? undefined : 100} format={fmt} />
+      <AreaChart series={series} times={times} max={metric === 'network' ? undefined : 100} floor={1024} format={fmt} />
     </Panel>
   );
 }
@@ -230,8 +230,8 @@ export function TmuxPanel({d, now, busy, pending, onOpen, onCreate, onKill, go}:
             <div className="session" key={s.name}>
               <button className="session-open" onClick={() => onOpen(s.name)} disabled={busy} aria-label={`Preview ${s.name}`}>
                 <span className="terminal-icon"><Terminal size={16} /></span>
-                <div><strong>{s.name}</strong><small>{s.windows} {s.windows === 1 ? 'window' : 'windows'} · up {elapsed(now / 1000 - s.created)}</small></div>
-                <Pill on={!!s.attached}>{s.attached ? 'Attached' : 'Detached'}</Pill>
+                <div><strong>{s.name}</strong><small>{s.windows} {s.windows === 1 ? 'window' : 'windows'} · up {elapsed(now / 1000 - s.created)}<span className={`show-sm${s.attached ? ' lime' : ''}`}> · {s.attached ? 'attached' : 'detached'}</span></small></div>
+                <span className="hide-sm"><Pill on={!!s.attached}>{s.attached ? 'Attached' : 'Detached'}</Pill></span>
               </button>
               <div className="row-actions">
                 <button title="Kill session" className="danger" aria-label={`Kill ${s.name}`} disabled={busy} onClick={() => onKill(s.name)}><Busy on={pending === `tmux:${s.name}:kill`}><Trash2 size={14} /></Busy></button>

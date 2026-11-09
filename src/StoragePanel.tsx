@@ -86,7 +86,7 @@ function DrivePanel({d}: {d: Disk}) {
     {h.level !== 'ok' && <div className="gpu-note" style={h.level === 'critical' ? {background: 'var(--red-bg)', color: 'var(--red)'} : undefined}><AlertTriangle size={14} />{h.reasons.join(' · ')}</div>}
     <div className="gpu-metrics">{metrics.map(([k, v, tip]) => <div key={k} title={tip}><small>{k}</small><strong style={k === 'Temperature' && tempL !== 'ok' ? {color: levelColor[tempL]} : undefined}>{v}</strong></div>)}</div>
     {hist.length > 1 && <div className="gpu-temp-chart">
-      <AreaChart series={series} times={times} format={rate} height={130} />
+      <AreaChart series={series} times={times} format={rate} floor={1024} height={130} />
       <div className="chart-legend">{series.map(c => <span key={c.label}><i style={{background: c.color}} />{c.label}</span>)}{d.totals && <span className="dim">Since boot: {bytes(d.totals.read)} read · {bytes(d.totals.written)} written</span>}</div>
     </div>}
     <div className="drive-section">

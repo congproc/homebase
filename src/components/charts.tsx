@@ -72,16 +72,16 @@ export function Ring({value, color, size = 44}: {value: number; color: string; s
 export type Series = {label: string; color: string; values: number[]};
 
 /** Interactive area chart with a hover crosshair and tooltip. */
-export function AreaChart({series, times, max, format, height = 190}: {series: Series[]; times: number[]; max?: number; format: (v: number) => string; height?: number}) {
+export function AreaChart({series, times, max, floor = 1, format, height = 190}: {series: Series[]; times: number[]; max?: number; floor?: number; format: (v: number) => string; height?: number}) {
   const id = safeId(useId());
   const ref = useRef<HTMLDivElement>(null);
   const [hoverRaw, setHover] = useState<number | null>(null);
   const top = useMemo(() => {
     if (max) return max;
-    const peak = Math.max(1, ...series.flatMap(s => s.values));
+    const peak = Math.max(floor, ...series.flatMap(s => s.values)); // floor keeps an idle chart from labelling 0.5 B/s steps
     const mag = 10 ** Math.floor(Math.log10(peak));
     return Math.ceil((peak * 1.15) / mag) * mag;
-  }, [series, max]);
+  }, [series, max, floor]);
   const n = times.length;
   const hover = hoverRaw !== null && hoverRaw < n ? hoverRaw : null; // data can shrink while hovering
   const ticks = [1, 0.75, 0.5, 0.25, 0];
