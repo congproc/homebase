@@ -6,7 +6,7 @@ import {Panel, Pill, Skeleton} from './components/panels';
 import {ago} from './lib/format';
 
 type UpdateState = {
-  current: string; repo: string; sourceCheckout: boolean; autoCheck: boolean;
+  current: string; repo: string; sourceCheckout: boolean; method: 'release' | 'git'; blocked: string | null; autoCheck: boolean;
   latest: {version: string; name: string; notes: string; url: string; publishedAt: string} | null;
   available: boolean; checkedAt: number | null; error: string | null;
   job: {state: 'downloading' | 'installing' | 'failed'; version: string; at: number; error?: string; log?: string} | null;
@@ -23,7 +23,8 @@ async function post(token: string | undefined, action: 'check' | 'apply'): Promi
 
 const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => toast.success('Copied'), () => toast.error('Copy failed'));
 
-export default function UpdatePanel({token, now}: {token?: string; now: number}) {
+/** `autoStart` changes (e.g. the top-bar Update button) → run the update flow once, with confirmation. */
+export default function UpdatePanel({token, now, autoStart = 0}: {token?: string; now: number; autoStart?: number}) {
   const ask = useConfirm();
   const [u, setU] = useState<UpdateState | null>(null);
   const [busy, setBusy] = useState<'check' | 'apply' | null>(null);
@@ -36,6 +37,8 @@ export default function UpdatePanel({token, now}: {token?: string; now: number})
       if (!r.ok) return;
       const j: UpdateState = await r.json();
       setU(j);
+      // An update started elsewhere (top bar, another tab) is running: follow it to the restart.
+      if (!startedFrom.current && (j.job?.state === 'installing' || j.job?.state === 'downloading')) { startedFrom.current = j.current; setWaitingFor(j.job.version); }
       // The server restarted on the new version: reload so the new dashboard code is used too.
       if (startedFrom.current && j.current !== startedFrom.current) {
         toast.success(`Updated to Homebase ${j.current}`);
@@ -62,12 +65,15 @@ export default function UpdatePanel({token, now}: {token?: string; now: number})
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(null); }
   };
 
-  const apply = async () => {
-    if (!u?.latest) return;
+  const apply = useCallback(async (u: UpdateState) => {
+    if (!u.latest) return;
+    if (u.blocked) { toast.error(u.blocked); return; }
     const ok = await ask({
       title: `Update to Homebase ${u.latest.version}?`,
       body: <>
-        <p>Homebase downloads the release from <span className="mono">github.com/{u.repo}</span>, checks its SHA-256, installs it over the current version and restarts. Your settings are kept.</p>
+        {u.method === 'git'
+          ? <p>This copy runs from a git checkout: Homebase runs <code>git pull --ff-only</code> and <code>./install.sh --in-place</code>, then restarts. Your settings are kept.</p>
+          : <p>Homebase downloads the release from <span className="mono">github.com/{u.repo}</span>, checks its SHA-256, installs it over the current version and restarts. Your settings are kept.</p>}
         <p>The dashboard is unavailable for a few seconds and reloads by itself.</p>
       </>,
       confirm: 'Update and restart',
@@ -83,7 +89,15 @@ export default function UpdatePanel({token, now}: {token?: string; now: number})
       setWaitingFor(null);
       toast.error((e as Error).message);
     } finally { setBusy(null); }
-  };
+  }, [ask, token]);
+
+  // Top-bar button: run once per press, as soon as the status is loaded.
+  const handled = useRef(0);
+  useEffect(() => {
+    if (!autoStart || autoStart === handled.current || !u) return;
+    handled.current = autoStart;
+    void apply(u);
+  }, [autoStart, u, apply]);
 
   if (!u) return <Panel title="Homebase" sub="App version and updates"><div className="update-body"><Skeleton h={18} w="60%" /></div></Panel>;
 
@@ -109,9 +123,11 @@ export default function UpdatePanel({token, now}: {token?: string; now: number})
           {status}
         </div>
 
-        {u.available && !updating && (u.sourceCheckout
-          ? <div className="update-note"><AlertTriangle size={14} /><span>This copy runs from a source checkout, so it isn’t updated from here. Update it with <code>git pull && ./install.sh --in-place</code>.</span></div>
-          : <button className="button primary" onClick={apply} disabled={!!busy}><Download size={14} /> Update to {u.latest!.version}</button>)}
+        {u.available && !updating && <>
+          <button className="button primary" onClick={() => apply(u)} disabled={!!busy || !!u.blocked}><Download size={14} /> Update to {u.latest!.version}</button>
+          {u.blocked && <div className="update-note"><AlertTriangle size={14} /><span>{u.blocked}</span></div>}
+          {u.method === 'git' && !u.blocked && <small className="update-hint">Git checkout: updates with <code>git pull --ff-only</code>.</small>}
+        </>}
 
         {updating && <div className="update-note info"><RefreshCw size={14} className="spin" /><span>Downloading, verifying and installing. The dashboard restarts and reloads by itself; this usually takes under a minute.</span></div>}
 

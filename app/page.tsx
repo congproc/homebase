@@ -1,7 +1,7 @@
 'use client';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Globe, LayoutDashboard, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
+  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, LayoutDashboard, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
 } from 'lucide-react';
 import {SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, useSidebar} from '@/components/ui/sidebar';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from '@/components/ui/dialog';
@@ -51,6 +51,7 @@ function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [palette, setPalette] = useState(false);
+  const [updateRequest, setUpdateRequest] = useState(0); // top-bar Update button presses
 
   const setPage = useCallback((p: string) => {
     const item = NAV.find(n => n.name === p);
@@ -213,7 +214,7 @@ function Home() {
             <span className="avatar">{(d?.user || '·').replace(/[^a-zA-Z0-9]+/g, ' ').trim().split(' ').slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '·'}</span>
             <div><strong>{d?.user || 'Local administrator'}</strong><small>{typeof window !== 'undefined' && window.location.hostname.endsWith('.ts.net') ? 'via Tailscale' : '127.0.0.1 · this machine'}</small></div>
           </div>
-          <div className="version"><span>Homebase {d?.version ? `v${d.version}` : ''}</span>{d?.updateAvailable
+          <div className="version"><button className="version-link" onClick={() => setPage('Hosts')} title="Version and updates">Homebase {d?.version ? `v${d.version}` : ''}</button>{d?.updateAvailable
             ? <button className="version-update" onClick={() => setPage('Hosts')} title="A newer Homebase is available">UPDATE</button>
             : <span>LOCAL</span>}</div>
         </SidebarFooter>
@@ -227,6 +228,8 @@ function Home() {
             <span className="breadcrumb"><span className="hide-sm">{d?.hostname || 'Workspace'}</span><ChevronRight size={13} className="hide-sm" /><strong>{page}</strong></span>
           </div>
           <div className="topbar-right">
+            {d?.updateAvailable && <button className="button small primary topbar-update" onClick={() => { setPage('Hosts'); setUpdateRequest(n => n + 1); }} title="A newer Homebase is available">
+              <Download size={13} /><span className="hide-sm">Update</span></button>}
             <button className="topbar-search" onClick={() => setPalette(true)} aria-label="Open command palette"><Search size={14} /><span>Search</span><kbd>Ctrl K</kbd></button>
             <span className={`connection ${error ? 'offline' : d ? '' : 'pending'}`} title={d ? `Last reading ${clock(d.at, true)}` : undefined}>
               <i />{error ? 'Disconnected' : d ? <>Live <span className="hide-sm">· {ago(stale)}</span></> : 'Connecting'}
@@ -279,7 +282,7 @@ function Home() {
             <EventsPanel d={d} now={now} />
           </>}
           {page === 'Resources' && <><GpuPanel d={d} /><ProcessesPanel d={d} /></>}
-          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} /><HostDetails d={d} uptime={uptime} /></>}
+          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /></>}
           {page === 'Containers' && containersPanel(true)}
           {page === 'Tmux sessions' && tmuxPanel(true)}
           {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} /><ModelsPanel d={d} /></>}

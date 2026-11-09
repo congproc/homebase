@@ -1,8 +1,10 @@
 // In-app updates from the project's GitHub releases.
 // Check: GitHub "latest release" API (startup + every 12 h unless config "updates.check" is false, or on demand).
-// Apply: download the release tarball + .sha256 from that fixed repository, verify, extract, then run the release's
-// install.sh in a transient systemd user unit — outside homebase.service's cgroup, so the restart it performs does not
-// kill the installer. Source checkouts (installed with --in-place) are never touched: they update with git.
+// Apply (installed copy): download the release tarball + .sha256 from that fixed repository, verify, extract, then run
+// the release's install.sh in a transient systemd user unit — outside homebase.service's cgroup, so the restart it
+// performs does not kill the installer.
+// Apply (git checkout, installed with --in-place): `git pull --ff-only` from its upstream, then `install.sh --in-place`,
+// same transient unit. Refused while tracked files have uncommitted changes, so local work is never overwritten.
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
@@ -77,6 +79,19 @@ async function logTail() {
   return s.replace(ANSI, '').trim().split('\n').slice(-15).join('\n');
 }
 
+const git = args => exec('git', ['-C', ROOT, ...args], {timeout: 10000}).then(r => r.stdout.trim());
+/** Why a git checkout can't be updated right now (null = it can). */
+async function gitBlocker() {
+  try {
+    if (await git(['status', '--porcelain', '--untracked-files=no'])) return 'This checkout has uncommitted changes. Commit or stash them, then update.';
+    await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => { throw Error('no-upstream'); });
+    return null;
+  } catch (e) {
+    if (e.message === 'no-upstream') return 'This checkout’s branch has no upstream to pull from.';
+    return e.code === 'ENOENT' ? 'git is not installed.' : 'This copy is not a git checkout; reinstall it from a release.';
+  }
+}
+
 export const updateAvailable = () => !!latest && compareVersions(latest.version, VERSION) > 0 && !!latest.tarball && !!latest.checksum;
 
 export async function updateStatus() {
@@ -87,7 +102,8 @@ export async function updateStatus() {
     else if (Date.now() - job.at > 5 * 60 * 1000) job = {...job, state: 'failed', error: 'The update did not finish within 5 minutes.'};
   }
   return {
-    current: VERSION, repo: REPO, sourceCheckout: SOURCE_CHECKOUT, autoCheck: config.updates.check,
+    current: VERSION, repo: REPO, sourceCheckout: SOURCE_CHECKOUT, method: SOURCE_CHECKOUT ? 'git' : 'release', autoCheck: config.updates.check,
+    blocked: SOURCE_CHECKOUT ? await gitBlocker() : null,
     latest: latest && {version: latest.version, name: latest.name, notes: latest.notes, url: latest.url, publishedAt: latest.publishedAt},
     available: updateAvailable(),
     checkedAt: checkedAt || null, error: checkError,
@@ -105,12 +121,31 @@ async function download(url, file) {
   return buf;
 }
 
+// Runs a fixed script in its own transient user unit (outside homebase.service, which the script restarts).
+async function launch(script, args) {
+  // The transient unit starts from the user manager's environment, not ours: carry over where settings live.
+  const env = process.env.XDG_CONFIG_HOME ? [`--setenv=XDG_CONFIG_HOME=${process.env.XDG_CONFIG_HOME}`] : [];
+  await exec('systemd-run', ['--user', '--collect', '--quiet', `--unit=homebase-update-${Date.now()}`, ...env, '/bin/bash', '-c', script, 'homebase-update', ...args], {timeout: 15000});
+}
+
+async function applyGit(version) {
+  const blocked = await gitBlocker();
+  if (blocked) throw Error(blocked);
+  job = {state: 'installing', version, at: Date.now()};
+  await mkdir(STATE_DIR, {recursive: true, mode: 0o700});
+  await writeFile(LOG, `Updating Homebase ${VERSION} → ${version} (git checkout) at ${new Date().toISOString()}\n`, {mode: 0o600});
+  const script = 'exec >>"$1" 2>&1; cd "$2" || exit 1; git pull --ff-only && HOMEBASE_NODE="$3" bash ./install.sh --in-place; code=$?; echo "homebase-update-exit=$code"; exit $code';
+  try { await launch(script, [LOG, ROOT, process.execPath]); }
+  catch (e) { job = {state: 'failed', version, at: Date.now(), error: e.message}; throw e; }
+  return updateStatus();
+}
+
 export async function applyUpdate() {
-  if (SOURCE_CHECKOUT) throw Error('This is a source checkout; update it with git pull && ./install.sh --in-place');
   if (job && job.state !== 'failed') throw Error('An update is already in progress');
   await checkForUpdate(true);
   if (!latest) throw Error(checkError || 'Could not reach GitHub');
   if (compareVersions(latest.version, VERSION) <= 0) throw Error(`Already on the latest version (${VERSION})`);
+  if (SOURCE_CHECKOUT) return applyGit(latest.version);
   if (!latest.tarball || !latest.checksum) throw Error('The release has no installable package');
   const {version} = latest, name = `homebase-${version}`;
   job = {state: 'downloading', version, at: Date.now()};
@@ -129,10 +164,7 @@ export async function applyUpdate() {
     await writeFile(LOG, `Updating Homebase ${VERSION} → ${version} at ${new Date().toISOString()}\n`, {mode: 0o600});
     // Fixed argv, no user input: paths are ours, the script comes from the checksum-verified release.
     const script = 'exec >>"$1" 2>&1; HOMEBASE_NODE="$2" HOMEBASE_PREFIX="$3" bash "$4"; code=$?; echo "homebase-update-exit=$code"; rm -rf "$5"; exit $code';
-    // The transient unit starts from the user manager's environment, not ours: carry over where settings live.
-    const env = process.env.XDG_CONFIG_HOME ? [`--setenv=XDG_CONFIG_HOME=${process.env.XDG_CONFIG_HOME}`] : [];
-    await exec('systemd-run', ['--user', '--collect', '--quiet', `--unit=homebase-update-${Date.now()}`, ...env, '/bin/bash', '-c', script, 'homebase-update',
-      LOG, process.execPath, ROOT, installer, dir], {timeout: 15000});
+    await launch(script, [LOG, process.execPath, ROOT, installer, dir]);
     job = {state: 'installing', version, at: Date.now()};
   } catch (e) {
     job = {state: 'failed', version, at: Date.now(), error: e.message};

@@ -165,6 +165,11 @@ kbd {
 .update-notes { width: 100%; font-size: 12.5px; color: var(--text-2); }
 .update-notes summary { cursor: pointer; }
 .update-notes pre { margin-top: 8px; padding: 10px 12px; background: var(--bg); border-radius: 8px; }
+.version-link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.version-link:hover { color: var(--text-2); }
+.topbar-update { gap: 6px; }
+.update-hint { color: var(--text-3); font-size: 12px; }
+.update-hint code { font-family: var(--mono); font-size: 11.5px; }
 .update-ok { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
 .update-ok svg { color: var(--lime); }
 @media (max-width: 640px) { .update-body { padding: 0 14px 14px; } .update-body > .button { width: 100%; justify-content: center; } }
