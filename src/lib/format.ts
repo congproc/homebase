@@ -1,4 +1,4 @@
-import type {Level, Status} from './types';
+import type {Disk, Level, Status} from './types';
 
 export const bytes = (v = 0) =>
   v >= 1024 ** 4 ? (v / 1024 ** 4).toFixed(2) + ' TB'
@@ -32,6 +32,24 @@ export const clock = (t: number, seconds = false) =>
 export const levelFor = (percent: number, warn = 75, critical = 90): Level =>
   percent >= critical ? 'critical' : percent >= warn ? 'warn' : 'ok';
 
+/** Drive health from SMART and temperature, with reasons. Temperature limits come from the drive's sensor when it reports them. */
+export function diskHealth(disk: Disk): {level: Level; reasons: string[]} {
+  const reasons: string[] = [];
+  let level: Level = 'ok';
+  const name = disk.model || disk.name;
+  if (disk.smart?.state === 'ok' && disk.smart.level && disk.smart.level !== 'ok') {
+    level = disk.smart.level;
+    reasons.push(...(disk.smart.warnings || []).map(w => `${name}: ${w}`));
+  }
+  const t = disk.temperature;
+  if (t != null) {
+    const crit = disk.tempCrit ?? (disk.rotational ? 55 : 80), warn = disk.tempWarn && disk.tempWarn < crit ? disk.tempWarn : crit - (disk.rotational ? 5 : 10);
+    if (t >= crit) { level = 'critical'; reasons.push(`${name} at ${Math.round(t)}°C`); }
+    else if (t >= warn) { if (level === 'ok') level = 'warn'; reasons.push(`${name} running hot (${Math.round(t)}°C)`); }
+  }
+  return {level, reasons};
+}
+
 /** Overall host health, with the human-readable reasons behind it. */
 export function health(d: Status | null, error: string): {level: Level; title: string; reasons: string[]} {
   if (!d) return {level: error ? 'offline' : 'pending', title: error ? 'Agent unreachable' : 'Connecting', reasons: []};
@@ -46,6 +64,11 @@ export function health(d: Status | null, error: string): {level: Level; title: s
   check('CPU', d.cpu, 75, 90);
   check('Memory', d.memory.percent, 80, 92);
   if (d.disk) check('Disk', d.disk.percent, 80, 92);
+  for (const disk of d.disks?.items || []) {
+    const dh = diskHealth(disk);
+    if (dh.level === 'critical') level = 'critical'; else if (dh.level === 'warn' && level === 'ok') level = 'warn';
+    reasons.push(...dh.reasons);
+  }
   if (d.load[0] > d.cores) { if (level === 'ok') level = 'warn'; reasons.push(`Load ${d.load[0].toFixed(2)} exceeds ${d.cores} cores`); }
   const title = level === 'critical' ? 'Under heavy pressure' : level === 'warn' ? 'Needs attention' : 'All systems normal';
   return {level, title, reasons};

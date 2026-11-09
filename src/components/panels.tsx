@@ -10,7 +10,7 @@ import {
 import {Table, TableHeader, TableBody, TableRow, TableHead, TableCell} from '@/components/ui/table';
 import {AreaChart, Ring, Sparkline} from './charts';
 import {Num} from './motion';
-import {ago, bytes, clock, elapsed, health, levelColor, levelFor, rate} from '../lib/format';
+import {ago, bytes, clock, diskHealth, elapsed, health, levelColor, levelFor, rate} from '../lib/format';
 import type {Container, Proc, Status} from '../lib/types';
 
 /* ---------- primitives ---------- */
@@ -152,6 +152,12 @@ export function HealthPanel({d, error, go}: {d: Status | null; error: string; go
       <div className="health-row"><span>Load average <em>1 / 5 / 15m</em></span><strong className="mono">{d?.load.map(v => v.toFixed(2)).join(' / ') || '—'}</strong></div>
       <button className="health-row link" onClick={() => go('Containers')}><span>Running containers</span><strong>{running} <span className="dim">/ {containers.length}</span></strong></button>
       <button className="health-row link" onClick={() => go('Tmux sessions')}><span>Tmux sessions</span><strong>{d?.sessions.items.length ?? '—'}</strong></button>
+      {!!d?.disks?.items.length && (() => {
+        const levels = d.disks.items.map(x => diskHealth(x).level), bad = levels.filter(l => l !== 'ok').length;
+        const hottest = Math.max(...d.disks.items.map(x => x.temperature ?? -Infinity));
+        return <button className="health-row link" onClick={() => go('Storage')}><span>Drives</span>
+          <span className={bad ? (levels.includes('critical') ? 'red' : 'amber') : 'lime'}>{bad ? `${bad} need${bad === 1 ? 's' : ''} attention` : `${d.disks.items.length} healthy`}{Number.isFinite(hottest) ? <span className="dim"> · {Math.round(hottest)}°C</span> : null}</span></button>;
+      })()}
       <button className="health-row link" onClick={() => go('AI services')}><span>Ollama API</span><span className={d?.ollamaOnline ? 'lime' : 'dim'}>{d?.ollamaOnline ? `Connected · ${d.models.length} loaded` : 'Unavailable'}</span></button>
     </Panel>
   );

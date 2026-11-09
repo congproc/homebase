@@ -10,6 +10,22 @@ export type Gpu = {
   processes: GpuProc[];
   history: GpuPoint[];
 };
+export type DiskVolume = {name: string; path: string; type: string; depth: number; fstype: string | null; label: string | null; size: number; mounts: string[]; used?: number; total?: number; available?: number; percent?: number};
+export type DiskSmart = {
+  state: 'ok' | 'standby' | 'not-installed' | 'needs-setup' | 'error'; error?: string;
+  passed?: boolean | null; temperature?: number | null; powerOnHours?: number | null; powerCycles?: number | null; life?: number | null;
+  written?: number | null; read?: number | null; unsafeShutdowns?: number | null; mediaErrors?: number | null; errorLog?: number | null; availableSpare?: number | null;
+  reallocated?: number | null; pending?: number | null; uncorrectable?: number | null; crcErrors?: number | null;
+  interfaceSpeed?: string | null; formFactor?: string | null; rotationRate?: number | null; warnings?: string[]; level?: 'ok' | 'warn' | 'critical';
+};
+export type Disk = {
+  name: string; path: string; model: string | null; vendor: string | null; serial: string | null; size: number; transport: string | null;
+  rotational: boolean; removable: boolean; state: string | null; kind: string; firmware: string | null; link: string | null; scheduler?: string | null;
+  temperature: number | null; sensors: {label: string; value: number; max: number | null; crit: number | null}[]; tempWarn: number | null; tempCrit: number | null;
+  io: {read: number; write: number; readIops: number; writeIops: number; util: number}; totals: {read: number; written: number} | null;
+  volumes: DiskVolume[]; usage: {used: number; total: number} | null; system: boolean; smart: DiskSmart | null; smartAt: number | null;
+  history: {at: number; read: number; write: number; util: number; temperature: number | null}[];
+};
 export type Container = {ID: string; Names: string; Image: string; State: string; Status: string; Ports?: string; RunningFor?: string};
 export type Session = {name: string; windows: number; attached: number; created: number};
 export type Proc = {pid: number; name: string; cpu: number; memory: number; elapsed: number};
@@ -39,6 +55,7 @@ export type Status = {
   ollamaOnline: boolean;
   processes: Proc[];
   gpu?: {available: boolean; error?: string; items: Gpu[]};
+  disks?: {available: boolean; error?: string; items: Disk[]; setupCommand?: string};
   events: {message: string; at: number}[];
   token: string;
   version?: string;

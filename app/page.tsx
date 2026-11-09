@@ -1,7 +1,7 @@
 'use client';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, LayoutDashboard, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
+  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
 } from 'lucide-react';
 import {SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, useSidebar} from '@/components/ui/sidebar';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from '@/components/ui/dialog';
@@ -11,6 +11,7 @@ import {ConfirmProvider, useConfirm} from '../src/components/confirm';
 import PowerPanel from '../src/PowerPanel';
 import TrafficPanel from '../src/TrafficPanel';
 import UpdatePanel from '../src/UpdatePanel';
+import StoragePanel from '../src/StoragePanel';
 import {registerMonitoringTool} from '../src/webmcp';
 import {LogoMark, useStatusFavicon} from '../src/components/logo';
 import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, StatCards, TmuxPanel} from '../src/components/panels';
@@ -20,6 +21,7 @@ import type {Status} from '../src/lib/types';
 const NAV = [
   {name: 'Overview', slug: 'overview', icon: LayoutDashboard, blurb: 'A little clarity for everything you’re running.'},
   {name: 'Resources', slug: 'resources', icon: Activity, blurb: 'Live resource usage and the processes behind it.'},
+  {name: 'Storage', slug: 'storage', icon: HardDrive, blurb: 'Drives, filesystems, temperatures and SMART health.'},
   {name: 'Hosts', slug: 'hosts', icon: Server, blurb: 'The machine that keeps your home lab running.'},
   {name: 'Containers', slug: 'containers', icon: Box, blurb: 'Keep your services running smoothly.'},
   {name: 'Tmux sessions', slug: 'tmux', icon: Terminal, blurb: 'Persistent terminals, always within reach.'},
@@ -126,7 +128,7 @@ function Home() {
     }
   };
 
-  // Keyboard: ⌘K / Ctrl+K palette, 1–8 jump to page, R refresh.
+  // Keyboard: ⌘K / Ctrl+K palette, 1–9 and 0 jump to page, R refresh.
   const keyRef = useRef({setPage, manualRefresh});
   useEffect(() => { keyRef.current = {setPage, manualRefresh}; });
   useEffect(() => {
@@ -134,7 +136,7 @@ function Home() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p); return; }
       const t = e.target as HTMLElement;
       if (e.metaKey || e.ctrlKey || e.altKey || t.closest('input,textarea,select,[contenteditable=true],[role=dialog]')) return;
-      if (/^[1-9]$/.test(e.key)) keyRef.current.setPage(NAV[Number(e.key) - 1].name);
+      if (/^[0-9]$/.test(e.key)) { const item = NAV[(Number(e.key) + 9) % 10]; if (item) keyRef.current.setPage(item.name); }
       else if (e.key === 'r') keyRef.current.manualRefresh();
       else if (e.key === '/') { e.preventDefault(); setPalette(true); }
     };
@@ -203,7 +205,7 @@ function Home() {
               <SidebarMenuItem key={n}>
                 <NavButton active={page === n} onClick={() => setPage(n)}>
                   <Icon size={17} /><span>{n}</span>
-                  {counts[n] !== undefined ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : <kbd className="nav-key">{i + 1}</kbd>}
+                  {counts[n] !== undefined ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : <kbd className="nav-key">{(i + 1) % 10}</kbd>}
                 </NavButton>
               </SidebarMenuItem>
             ))}
@@ -283,6 +285,7 @@ function Home() {
           </>}
           {page === 'Resources' && <><GpuPanel d={d} /><ProcessesPanel d={d} /></>}
           {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /></>}
+          {page === 'Storage' && <StoragePanel d={d} />}
           {page === 'Containers' && containersPanel(true)}
           {page === 'Tmux sessions' && tmuxPanel(true)}
           {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} /><ModelsPanel d={d} /></>}
@@ -292,7 +295,7 @@ function Home() {
 
           <footer className="page-footer">
             <span><span className="tiny-dot" /> {error ? 'Readings may be stale' : 'Direct from your machine. No cloud required.'}</span>
-            <span className="hide-sm">Press <kbd>1</kbd>–<kbd>9</kbd> to switch pages · <kbd>R</kbd> to refresh</span>
+            <span className="hide-sm">Press <kbd>1</kbd>–<kbd>0</kbd> to switch pages · <kbd>R</kbd> to refresh</span>
           </footer>
         </div>
       </main>
@@ -309,7 +312,7 @@ function Home() {
               <CommandGroup heading="Pages">
                 {NAV.map(({name: n, icon: Icon}, i) => (
                   <CommandItem key={n} value={`page ${n}`} onSelect={() => { setPage(n); setPalette(false); }}>
-                    <Icon /><span>{n}</span><CommandShortcut>{i + 1}</CommandShortcut>
+                    <Icon /><span>{n}</span><CommandShortcut>{(i + 1) % 10}</CommandShortcut>
                   </CommandItem>
                 ))}
               </CommandGroup>

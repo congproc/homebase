@@ -68,6 +68,8 @@ small { font-size: 12px; }
 .mono { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .dim { color: var(--text-3); }
 .lime { color: var(--lime); }
+.amber { color: var(--amber); }
+.red { color: var(--red); }
 .sky { color: var(--sky); }
 .pink { color: var(--pink); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -868,3 +870,44 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
 /* Save bar floats only while there are unsaved changes; otherwise it sits in flow and covers nothing. */
 .save-settings { position: relative; bottom: auto; background: var(--surface); }
 .save-settings.dirty { position: sticky; bottom: 14px; background: rgba(24, 25, 28, .96); animation: rise .3s var(--ease-out) backwards; }
+
+/* ---------- storage ---------- */
+.storage-view { display: flex; flex-direction: column; gap: 20px; }
+.storage-view .gpu-panel { margin-bottom: 0; }
+.resource-icon.amber { color: var(--amber); background: var(--amber-bg); }
+.drive-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.drive-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 4px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-card); color: inherit; text-decoration: none; transition: border-color .2s; min-width: 0; }
+.drive-card:hover { border-color: var(--line); }
+.drive-card.level-warn { border-color: rgba(229, 187, 123, .35); }
+.drive-card.level-critical { border-color: rgba(239, 143, 125, .45); }
+.drive-card .meter { margin-top: 0; }
+.drive-card .meter-legend { margin: 0 0 12px; }
+.drive-card-top { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.drive-card-top > div { display: flex; flex-direction: column; min-width: 0; }
+.drive-card-top strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-card-top small { color: var(--text-3); font-size: 12px; }
+.drive-card-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.drive-card-stats > span:not(.status) { display: inline-flex; align-items: center; gap: 4px; }
+.drive-card-stats .status { margin-left: auto; }
+.drive-anchor { scroll-margin-top: 72px; }
+.drive-panel .mono-sub { overflow-wrap: anywhere; }
+.drive-section { padding: 14px 20px 6px; }
+.drive-section:last-child { padding-bottom: 16px; }
+.drive-section h4 { font-size: 12.5px; font-weight: 500; color: var(--text-2); margin: 0 0 6px; }
+.drive-section .detail-list { padding: 0; }
+.detail-list.compact > div { padding: 8px 0; font-size: 12.5px; }
+.drive-section .gpu-note { margin: 0 0 8px; }
+.drive-note { font-size: 12.5px; margin: 0; padding: 4px 20px 16px; }
+.drive-section .drive-note { padding: 0; }
+.volume-list { border-top: 1px solid var(--line-soft); }
+.volume-list > div { display: grid; grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1fr) 200px; gap: 10px; align-items: center; padding: 7px 0; font-size: 12.5px; color: var(--text-2); border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
+.volume-list > div > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vol-usage { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.setup-notice code { font-family: var(--mono); font-size: 12px; }
+.setup-notice p code { color: #d3dfb8; }
+@media (max-width: 640px) {
+  .drive-section { padding-left: 14px; padding-right: 14px; }
+  .drive-note { padding-left: 14px; padding-right: 14px; }
+  .volume-list > div { grid-template-columns: 1fr auto; row-gap: 2px; }
+  .volume-list > div > span:nth-child(2) { text-align: right; }
+}

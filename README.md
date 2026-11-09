@@ -1,12 +1,12 @@
 # Homebase
 
-A private dashboard and control panel for one Linux home server: CPU, memory, disk and network, Docker containers, tmux sessions, Claude Code / Codex / Ollama, systemd services, visitor traffic for your own sites, and a smart nightly sleep schedule with RTC wake.
+A private dashboard and control panel for one Linux home server: CPU, memory, drives (health, temperature, throughput, filesystems) and network, Docker containers, tmux sessions, Claude Code / Codex / Ollama, systemd services, visitor traffic for your own sites, and a smart nightly sleep schedule with RTC wake.
 
 It runs as an unprivileged **user** service, listens only on `127.0.0.1`, and has no npm runtime dependencies — a release needs nothing but Node.js on the target machine.
 
 ## Install on a machine
 
-Requirements: Linux with systemd, Node.js **22.13+**. Optional: Docker, tmux, Ollama, Tailscale, `nvidia-smi` for NVIDIA GPUs (missing tools simply show as unavailable). AMD and Intel GPUs need nothing extra.
+Requirements: Linux with systemd, Node.js **22.13+**. Optional: Docker, tmux, Ollama, Tailscale, `nvidia-smi` for NVIDIA GPUs, `smartmontools` for drive health (missing tools simply show as unavailable). AMD and Intel GPUs need nothing extra.
 
 One line (downloads the latest release, verifies its checksum, and fetches Node.js 24 into the install folder if the machine has no Node.js 22.13+):
 
@@ -29,8 +29,8 @@ Upgrade later with the **Update** button that appears in the dashboard's top bar
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.4.2.tar.gz.sha256
-tar xzf homebase-1.4.2.tar.gz && cd homebase-1.4.2
+sha256sum -c homebase-1.5.0.tar.gz.sha256
+tar xzf homebase-1.5.0.tar.gz && cd homebase-1.5.0
 ./install.sh --linger
 ```
 
@@ -52,14 +52,14 @@ Re-running `install.sh` upgrades in place and keeps your settings. Remove with `
 
 ### Optional root integration (sleep schedule, system services)
 
-Nightly smart sleep and start/stop of system services need a one-time root setup. Review `system/` first, then:
+Nightly smart sleep, start/stop of system services and SMART drive health need a one-time root setup. Review `system/` first, then:
 
 ```sh
 python3 system/install-power.py --check --user "$USER"   # validate only, changes nothing
 sudo python3 system/install-power.py --user "$USER"
 ```
 
-It installs a fixed-purpose root helper (`/usr/local/sbin/homebase-power`: strict JSON schema, no shell), the busy check and night controller scripts, the `server-night-sleep` timer/service, and a sudoers rule that lets **only that account** run the helper without a password. Existing files are backed up to `/var/backups/homebase-power/<timestamp>/`, the sudoers file is validated with `visudo` before it goes live, and nothing suspends during installation. On a new machine nightly sleep starts **disabled** — turn it on in **Sleep & power**. Remove with `sudo python3 system/install-power.py --uninstall`.
+It installs a fixed-purpose root helper (`/usr/local/sbin/homebase-power`: strict JSON schema, no shell), the busy check and night controller scripts, the `server-night-sleep` timer/service, and a sudoers rule that lets **only that account** run the helper without a password. The helper's `smart <disk>` operation is read-only, accepts only whole-disk names, returns a fixed subset of `smartctl` output, and skips drives in standby so it never spins them up. Existing files are backed up to `/var/backups/homebase-power/<timestamp>/`, the sudoers file is validated with `visudo` before it goes live, and nothing suspends during installation. On a new machine nightly sleep starts **disabled** — turn it on in **Sleep & power**. Remove with `sudo python3 system/install-power.py --uninstall`.
 
 The night controller skips the night if the server is busy (CPU ≥ 15 %, network ≥ 1 MiB/s, busy containers, backups/transfers, NVIDIA compute jobs or an AMD/Intel GPU ≥ 30 % busy, sleep inhibitors, and optionally SSH sessions, non-shell tmux panes or selected services), arms an RTC alarm for the wake time, suspends, and restores everything on resume. If `sleep.target` was masked (an always-on server), it is masked again after resume. Details: `docs/SLEEP-HANDOFF.md`.
 
@@ -112,6 +112,7 @@ Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `
 ## Features
 
 - **Overview / Resources:** live CPU, memory, disk, network every 5 s with a 15-minute history (paused while no dashboard is open; gaps are shown as breaks), health summary, top processes.
+- **Storage:** every physical drive (SATA, NVMe, USB, virtual) with model, serial, firmware and PCIe link, temperature from the drive's own sensors, live read/write throughput, IOPS and busy %, a 15-minute I/O chart, partitions with mount points and usage (including LVM/LUKS volumes), and SMART health — pass/fail, wear / life left, power-on time, bad and pending sectors, media errors, lifetime bytes written. Capacity, temperatures and I/O need no root; SMART needs `smartmontools` and the root integration (re-run `install-power.py` to add it). Failing drives and high temperatures also raise the overall health level.
 - **Updates:** when a newer release is on GitHub, an **Update** button appears in the top bar and an **UPDATE** badge in the sidebar; **Hosts → Homebase** (or click the version in the sidebar) shows the installed version, release notes and *Check now*. Homebase checks at start and every 12 h — set `"updates": {"check": false}` to turn that off; then only *Check now* contacts GitHub. Updating keeps your settings, restarts Homebase and reloads the page:
   - **Installed copy** (one-liner or tarball): downloads the release, verifies its SHA-256 and runs its `install.sh`.
   - **Git checkout** (`--in-place`): `git pull --ff-only`, then `./install.sh --in-place`. Refused while tracked files have uncommitted changes, so local work is never overwritten.

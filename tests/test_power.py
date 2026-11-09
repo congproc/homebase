@@ -148,3 +148,29 @@ class LockAndNameHardeningTest(unittest.TestCase):
             power.control_service('stop','-Hx.service')
         with self.assertRaises(ValueError):
             power.control_service('stop','snap.thing.service')
+
+    def test_smart_rejects_unknown_or_unsafe_disk_names(self):
+        for name in ('-a', 'sda1', '../sda', 'sda;id', 'nvme0', 'dm-0', 'loop0', ''):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                power.smart(name)
+
+    def test_smart_summary_keeps_only_known_fields(self):
+        data={'smart_status':{'passed':True},'temperature':{'current':41},'power_on_time':{'hours':1234},'serial_number':'hidden',
+              'nvme_smart_health_information_log':{'percentage_used':2,'media_errors':0,'unrelated':1},
+              'ata_smart_attributes':{'table':[{'id':5,'name':'Reallocated_Sector_Ct','value':100,'worst':100,'thresh':10,'raw':{'value':0},'when_failed':''},{'id':1,'name':'Raw_Read_Error_Rate','raw':{'value':9}}]}}
+        out=power.smart_summary(data)
+        self.assertEqual(out['passed'],True)
+        self.assertEqual(out['powerOnHours'],1234)
+        self.assertEqual(out['nvme'],{'percentage_used':2,'media_errors':0})
+        self.assertEqual([a['id'] for a in out['ata']],[5])
+        self.assertIsNone(out['ata'][0]['failing'])
+        self.assertNotIn('serial_number',json.dumps(out))
+
+    def test_smart_standby_and_missing_tool(self):
+        with patch.object(power.pathlib.Path,'is_dir',return_value=True):
+            with patch.object(power,'SMARTCTL',('/nonexistent/smartctl',)):
+                self.assertEqual(power.smart('sda'),{'error':'not-installed'})
+            with patch.object(power,'SMARTCTL',(__file__,)),patch.object(power.os,'geteuid',return_value=0),\
+                 patch.object(power.subprocess,'run',return_value=SimpleNamespace(returncode=power.STANDBY,stdout='')) as run:
+                self.assertEqual(power.smart('nvme0n1'),{'standby':True})
+                self.assertEqual(run.call_args[0][0][-1],'/dev/nvme0n1')
