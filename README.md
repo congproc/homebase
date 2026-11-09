@@ -24,13 +24,13 @@ cd homebase
 ./install.sh --linger          # copy to ~/.local/share/homebase, start it, and start at boot
 ```
 
-Upgrade later from the dashboard (**Hosts → Homebase → Update**), or with `cd homebase && git pull && ./install.sh` (settings are kept).
+Upgrade later with the **Update** button that appears in the dashboard's top bar when a new release is out, or with `cd homebase && git pull && ./install.sh` (settings are kept).
 
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.4.1.tar.gz.sha256
-tar xzf homebase-1.4.1.tar.gz && cd homebase-1.4.1
+sha256sum -c homebase-1.4.2.tar.gz.sha256
+tar xzf homebase-1.4.2.tar.gz && cd homebase-1.4.2
 ./install.sh --linger
 ```
 
@@ -112,7 +112,11 @@ Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `
 ## Features
 
 - **Overview / Resources:** live CPU, memory, disk, network every 5 s with a 15-minute history (paused while no dashboard is open; gaps are shown as breaks), health summary, top processes.
-- **Updates:** **Hosts → Homebase** shows the installed version and checks GitHub for a newer release (at start and every 12 h; set `"updates": {"check": false}` in the config to turn that off — then only *Check now* contacts GitHub). *Update* downloads the release, verifies its SHA-256 and runs its `install.sh` in a separate systemd unit, then the dashboard restarts and reloads itself; settings are kept. The installer log is `~/.local/state/homebase/update.log`. Source checkouts are not self-updated (use `git pull && ./install.sh --in-place`). When the root-installed sleep scripts differ from the running version, the panel shows the `sudo` command that refreshes them.
+- **Updates:** when a newer release is on GitHub, an **Update** button appears in the top bar and an **UPDATE** badge in the sidebar; **Hosts → Homebase** (or click the version in the sidebar) shows the installed version, release notes and *Check now*. Homebase checks at start and every 12 h — set `"updates": {"check": false}` to turn that off; then only *Check now* contacts GitHub. Updating keeps your settings, restarts Homebase and reloads the page:
+  - **Installed copy** (one-liner or tarball): downloads the release, verifies its SHA-256 and runs its `install.sh`.
+  - **Git checkout** (`--in-place`): `git pull --ff-only`, then `./install.sh --in-place`. Refused while tracked files have uncommitted changes, so local work is never overwritten.
+
+  The installer runs in a separate systemd unit so the restart can't interrupt it; its log is `~/.local/state/homebase/update.log`, and if it fails the previous version keeps running. When the root-installed sleep scripts differ from the running version, the panel shows the `sudo` command that refreshes them.
 - **GPU:** NVIDIA (via `nvidia-smi`), AMD (`amdgpu`) and Intel integrated or Arc (`i915` / `xe`) — utilization, VRAM, temperature, power, fan and clocks where the driver exposes them, a 15-minute chart per GPU, and the processes using it. AMD/Intel readings come straight from sysfs without root; Intel utilization is the share of time the GPU was out of its idle (RC6) state, and per-process use (DRM fdinfo) covers processes of the account running Homebase. Integrated GPUs share system memory, so no VRAM is shown for them.
 - **Hosts:** machine details, sleep periods since boot, interfaces.
 - **Containers:** start, stop, restart, last 80 log lines (stop/restart confirm first).
