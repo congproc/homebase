@@ -922,3 +922,116 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
   .volume-list > div { grid-template-columns: 1fr auto; row-gap: 2px; }
   .volume-list > div > span:nth-child(2) { text-align: right; }
 }
+
+/* ============ navigation groups ============ */
+.nav-group + .nav-group { margin-top: 14px; }
+.nav-group .nav-button { height: 35px; }
+.nav-group .nav-button[data-active=true]::before { top: 8px; bottom: 8px; }
+.sidebar-search { margin-bottom: 18px; }
+
+/* ============ top processes ============ */
+.proc-table { table-layout: auto; }
+.proc-table .num { text-align: right; }
+.proc-table th.num .sort { flex-direction: row-reverse; }
+.proc-name { max-width: 0; width: 100%; }
+.proc-name .pname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.proc-meta { display: none; color: var(--text-3); font-size: 11px; margin-top: 2px; white-space: nowrap; }
+.usage { display: inline-flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.usage span { min-width: 44px; text-align: right; }
+.usage i { width: 72px; height: 4px; border-radius: 3px; background: var(--surface-3); overflow: hidden; flex-shrink: 0; }
+.usage b { display: block; height: 100%; border-radius: 3px; opacity: .85; transition: width .6s var(--ease-out); }
+.proc-sort { display: none; }
+
+/* ============ phone tab bar ============ */
+.mobile-tabs { display: none; }
+
+@media (max-width: 767px) {
+  .main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .mobile-tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line-soft);
+    background: rgba(17, 18, 20, .86); backdrop-filter: blur(14px) saturate(140%);
+  }
+  .mobile-tabs button {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    height: 50px; border-radius: 10px; color: var(--text-3); font-size: 10.5px; font-weight: 500; min-width: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-tabs button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-tabs button svg { transition: transform .25s var(--ease-spring); }
+  .mobile-tabs button.on { color: var(--lime); }
+  .mobile-tabs button.on svg { transform: translateY(-1px); }
+  .mobile-tabs button.on::before {
+    content: ''; position: absolute; top: -7px; left: 30%; right: 30%; height: 2px; border-radius: 0 0 2px 2px; background: var(--lime);
+    animation: grow-x .3s var(--ease-out);
+  }
+  .mobile-tabs button:active { background: var(--surface-2); }
+  .mobile-tabs em {
+    position: absolute; top: 4px; left: calc(50% + 6px); font-style: normal; font-size: 10px; line-height: 16px; min-width: 16px; padding: 0 4px;
+    border-radius: 8px; background: var(--red); color: #1a0d0a; font-weight: 600; animation: pop .3s var(--ease-spring);
+  }
+  .page-footer { padding-bottom: 16px; }
+  [data-sonner-toaster] { bottom: calc(76px + env(safe-area-inset-bottom)) !important; }
+  .save-settings.dirty { bottom: calc(74px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 980px) {
+  /* Health first: on a single column it is the answer to "is everything OK?" */
+  .chart-layout .system-panel { order: -1; }
+}
+
+@media (max-width: 640px) {
+  .content { padding-top: 16px; }
+  .page-heading { margin-bottom: 16px; }
+  .page-heading p { display: none; }
+  .eyebrow { margin-bottom: 4px; }
+  .content > .panel, .content > .power-view, .content > .host-grid, .stats, .chart-layout, .services-grid, .host-strip, .gpu-panel { margin-bottom: 14px; }
+  .chart-layout, .services-grid { gap: 14px; }
+  .stat { min-height: 132px; }
+  .stat-label { min-height: 32px; }
+  .stat .gauge { width: 32px; height: 32px; }
+  .sparkline, .spark-stack { height: 40px; }
+
+  /* Processes: one compact row per process, no sideways scrolling. */
+  .proc-sort { display: flex; align-items: center; gap: 6px; padding: 0 16px 12px; overflow-x: auto; scrollbar-width: none; }
+  .proc-sort > span { font-size: 11.5px; color: var(--text-3); margin-right: 2px; }
+  .proc-sort button {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; height: 30px; padding: 0 11px; border-radius: 15px;
+    border: 1px solid var(--line-soft); color: var(--text-2); font-size: 12px; font-weight: 500;
+  }
+  .proc-sort button.selected { color: var(--lime); border-color: rgba(209, 238, 151, .3); background: var(--lime-bg); }
+  .proc-table th { height: 30px; }
+  .proc-table th:first-child { padding-left: 16px; }
+  .proc-table th.num { padding-left: 6px; padding-right: 6px; }
+  .proc-table th.num:nth-child(4) { padding-right: 16px; }
+  .proc-table td { padding-top: 10px; padding-bottom: 10px; }
+  .proc-table td:first-child { padding-left: 16px; }
+  .proc-table td:last-child, .proc-table td.num:nth-child(4) { padding-right: 16px; }
+  .proc-table td.num { padding-left: 6px; padding-right: 6px; }
+  .proc-meta { display: block; }
+  .usage { flex-direction: column; align-items: flex-end; gap: 5px; }
+  .usage i { width: 52px; }
+  .proc-panel .panel-heading { padding-bottom: 12px; }
+
+  /* AI process lists: give the name room, drop the gutter. */
+  .agents { padding: 0 12px 12px; }
+  .agent { padding: 14px; }
+  .process-list > div { grid-template-columns: 50px minmax(0, 1fr) 44px auto 30px; }
+  .gpu-procs .process-list > div { grid-template-columns: 56px minmax(0, 1fr) auto; }
+  .gpu-procs .process-list.with-util > div { grid-template-columns: 56px minmax(0, 1fr) 44px auto; }
+  .tr-recent td { min-width: 0; overflow-wrap: anywhere; }
+}
+
+/* Touch: hover lifts stick after a tap, and small icon buttons are hard to hit. */
+@media (hover: none) {
+  .stat:hover, .agent:hover { transform: none; box-shadow: var(--shadow); }
+  .agent:hover .agent-logo, .nav-button:hover svg { transform: none; }
+}
+@media (pointer: coarse) {
+  .row-actions button { width: 38px; height: 38px; }
+  .proc-kill { width: 30px; height: 30px; }
+  .segmented button { padding: 7px 12px; }
+  .search-box { height: 38px; }
+  .search-box input { font-size: 16px; } /* stops iOS zooming into the field */
+  button, a { -webkit-tap-highlight-color: transparent; }
+}

@@ -6,11 +6,15 @@ const safeId = (id: string) => id.replace(/[^a-zA-Z0-9]/g, '');
 
 const GAP = 20000; // readings arrive every 5 s; anything longer is a pause or suspend
 
-/** X position (0..W) for each point: by timestamp when known, otherwise evenly spaced. */
+const GAP_SHOWN = 15000; // a pause is drawn as this much time, so an hour unwatched doesn't squash the live data into a sliver
+
+/** X position (0..W) for each point: by timestamp when known (pauses collapsed), otherwise evenly spaced. */
 function xs(n: number, times?: number[]) {
   if (times && times.length === n && n > 1 && times[n - 1] > times[0]) {
-    const t0 = times[0], span = times[n - 1] - t0;
-    return times.map(t => ((t - t0) / span) * W);
+    let acc = 0;
+    const t = times.map((v, i) => { const step = i ? v - times[i - 1] : 0; return (acc += step > GAP ? GAP_SHOWN : step); });
+    const span = t[n - 1] || 1;
+    return t.map(v => (v / span) * W);
   }
   const d = Math.max(n - 1, 1);
   return Array.from({length: n}, (_, i) => (i * W) / d);

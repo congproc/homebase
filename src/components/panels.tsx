@@ -413,6 +413,11 @@ export function HostDetails({d, uptime}: {d: Status | null; uptime: number}) {
 
 type SortKey = 'name' | 'pid' | 'cpu' | 'memory' | 'elapsed';
 
+/** Percentage with a fixed-width bar track, so the bar never spills into the next column. */
+function Usage({value, max, color}: {value: number; max: number; color: string}) {
+  return <div className="usage"><span>{value.toFixed(1)}%</span><i><b style={{width: `${Math.min(100, (value / max) * 100)}%`, background: color}} /></i></div>;
+}
+
 export function ProcessesPanel({d}: {d: Status | null}) {
   const [sort, setSort] = useState<{key: SortKey; desc: boolean}>({key: 'cpu', desc: true});
   const [q, setQ] = useState('');
@@ -424,27 +429,42 @@ export function ProcessesPanel({d}: {d: Status | null}) {
       return sort.desc ? -c : c;
     });
   }, [d, sort, q]);
-  const cols: [SortKey, string][] = [['name', 'Process'], ['pid', 'PID'], ['cpu', 'CPU'], ['memory', 'Memory'], ['elapsed', 'Elapsed']];
-  const head = (key: SortKey, label: string) => (
-    <TableHead key={key} aria-sort={sort.key === key ? (sort.desc ? 'descending' : 'ascending') : undefined}>
-      <button className={`sort ${sort.key === key ? 'on' : ''}`} onClick={() => setSort(s => ({key, desc: s.key === key ? !s.desc : key !== 'name'}))}>
-        {label}{sort.key === key ? (sort.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />) : <ArrowUpDown size={12} />}
-      </button>
+  const cols: [SortKey, string, string?][] = [['name', 'Process'], ['pid', 'PID', 'hide-sm'], ['cpu', 'CPU', 'num'], ['memory', 'Memory', 'num'], ['elapsed', 'Running', 'num hide-sm']];
+  const pick = (key: SortKey) => setSort(s => ({key, desc: s.key === key ? !s.desc : key !== 'name'}));
+  const arrow = (key: SortKey) => sort.key === key ? (sort.desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />) : <ArrowUpDown size={12} />;
+  const head = (key: SortKey, label: string, cls = '') => (
+    <TableHead key={key} className={cls} aria-sort={sort.key === key ? (sort.desc ? 'descending' : 'ascending') : undefined}>
+      <button className={`sort ${sort.key === key ? 'on' : ''}`} onClick={() => pick(key)}>{label}{arrow(key)}</button>
     </TableHead>
   );
+  // Bars are scaled to the busiest row so small differences stay readable.
   const maxCpu = Math.max(1, ...rows.map(p => p.cpu));
+  const maxMem = Math.max(1, ...rows.map(p => p.memory));
+  const total = d?.processes.length ?? 0;
   return (
-    <Panel title="Top processes" sub="CPU values are lifetime averages reported by ps" action={<SearchBox value={q} onChange={setQ} placeholder="Filter by name or PID" />}>
-      {!d ? <div className="pad"><Skeleton h={120} /></div> : !rows.length ? <Empty icon={Search} title="No matching processes" /> :
-        <Table>
-          <TableHeader><TableRow>{cols.map(([k, l]) => head(k, l))}</TableRow></TableHeader>
+    <Panel title="Top processes" className="proc-panel"
+      sub={d ? `${rows.length === total ? total : `${rows.length} of ${total}`} busiest · CPU is the lifetime average reported by ps` : 'CPU is the lifetime average reported by ps'}
+      action={<SearchBox value={q} onChange={setQ} placeholder="Filter by name or PID" />}>
+      <div className="proc-sort" role="group" aria-label="Sort processes">
+        <span>Sort</span>
+        {(['cpu', 'memory', 'elapsed', 'name'] as SortKey[]).map(k =>
+          <button key={k} className={sort.key === k ? 'selected' : ''} aria-pressed={sort.key === k} onClick={() => pick(k)}>
+            {{cpu: 'CPU', memory: 'Memory', elapsed: 'Running', name: 'Name', pid: 'PID'}[k]}{sort.key === k && arrow(k)}
+          </button>)}
+      </div>
+      {!d ? <div className="pad"><Skeleton h={120} /></div> : !rows.length ? <Empty icon={Search} title="No matching processes">Nothing matches “{q}”.</Empty> :
+        <Table className="proc-table">
+          <TableHeader><TableRow>{cols.map(([k, l, c]) => head(k, l, c))}</TableRow></TableHeader>
           <TableBody>{rows.map((p: Proc) => (
             <TableRow key={p.pid}>
-              <TableCell><strong className="pname">{p.name}</strong></TableCell>
-              <TableCell className="mono dim">{p.pid}</TableCell>
-              <TableCell><div className="cell-bar"><span>{p.cpu.toFixed(1)}%</span><i style={{width: `${(p.cpu / maxCpu) * 100}%`}} /></div></TableCell>
-              <TableCell>{p.memory.toFixed(1)}%</TableCell>
-              <TableCell className="mono dim">{elapsed(p.elapsed)}</TableCell>
+              <TableCell className="proc-name">
+                <strong className="pname" title={p.name}>{p.name}</strong>
+                <small className="proc-meta mono">PID {p.pid} · {elapsed(p.elapsed)}</small>
+              </TableCell>
+              <TableCell className="mono dim hide-sm">{p.pid}</TableCell>
+              <TableCell className="num"><Usage value={p.cpu} max={maxCpu} color="var(--lime)" /></TableCell>
+              <TableCell className="num"><Usage value={p.memory} max={maxMem} color="var(--violet)" /></TableCell>
+              <TableCell className="num mono dim hide-sm">{elapsed(p.elapsed)}</TableCell>
             </TableRow>
           ))}</TableBody>
         </Table>}

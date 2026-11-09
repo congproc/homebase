@@ -1,7 +1,7 @@
 'use client';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
+  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Menu, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
 } from 'lucide-react';
 import {SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, useSidebar} from '@/components/ui/sidebar';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from '@/components/ui/dialog';
@@ -18,18 +18,23 @@ import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPa
 import {ago, clock, elapsed, health} from '../src/lib/format';
 import type {Status} from '../src/lib/types';
 
+// Grouped by what you are doing: watching the machine, managing what runs on it, configuring it.
+// The 1–9/0 shortcuts follow this order.
 const NAV = [
-  {name: 'Overview', slug: 'overview', icon: LayoutDashboard, blurb: 'A little clarity for everything you’re running.'},
-  {name: 'Resources', slug: 'resources', icon: Activity, blurb: 'Live resource usage and the processes behind it.'},
-  {name: 'Storage', slug: 'storage', icon: HardDrive, blurb: 'Drives, filesystems, temperatures and SMART health.'},
-  {name: 'Hosts', slug: 'hosts', icon: Server, blurb: 'The machine that keeps your home lab running.'},
-  {name: 'Containers', slug: 'containers', icon: Box, blurb: 'Keep your services running smoothly.'},
-  {name: 'Tmux sessions', slug: 'tmux', icon: Terminal, blurb: 'Persistent terminals, always within reach.'},
-  {name: 'AI services', slug: 'ai', icon: Zap, blurb: 'Monitor your coding agents and local models.'},
-  {name: 'Hosted services', slug: 'services', icon: Globe, blurb: 'Your apps, their health, and how they affect sleep.'},
-  {name: 'Traffic', slug: 'traffic', icon: BarChart3, blurb: 'Who is using your hosted sites, from which devices, and when.'},
-  {name: 'Sleep & power', slug: 'power', icon: Moon, blurb: 'Save power without losing track of your work.'},
+  {name: 'Overview', slug: 'overview', icon: LayoutDashboard, group: 'Monitor', blurb: 'A little clarity for everything you’re running.'},
+  {name: 'Resources', slug: 'resources', icon: Activity, group: 'Monitor', blurb: 'Live resource usage and the processes behind it.'},
+  {name: 'Storage', slug: 'storage', icon: HardDrive, group: 'Monitor', blurb: 'Drives, filesystems, temperatures and SMART health.'},
+  {name: 'Traffic', slug: 'traffic', icon: BarChart3, group: 'Monitor', blurb: 'Who is using your hosted sites, from which devices, and when.'},
+  {name: 'Containers', slug: 'containers', icon: Box, group: 'Workloads', blurb: 'Keep your services running smoothly.'},
+  {name: 'Tmux sessions', slug: 'tmux', icon: Terminal, group: 'Workloads', blurb: 'Persistent terminals, always within reach.'},
+  {name: 'AI services', slug: 'ai', icon: Zap, group: 'Workloads', blurb: 'Monitor your coding agents and local models.'},
+  {name: 'Hosted services', slug: 'services', icon: Globe, group: 'Workloads', blurb: 'Your apps, their health, and how they affect sleep.'},
+  {name: 'Hosts', slug: 'hosts', icon: Server, group: 'System', blurb: 'The machine that keeps your home lab running.'},
+  {name: 'Sleep & power', slug: 'power', icon: Moon, group: 'System', blurb: 'Save power without losing track of your work.'},
 ] as const;
+const GROUPS = ['Monitor', 'Workloads', 'System'] as const;
+/** Pages on the phone tab bar; everything else lives behind "More". */
+const TABS: {name: PageName; label: string}[] = [{name: 'Overview', label: 'Overview'}, {name: 'Resources', label: 'Resources'}, {name: 'Storage', label: 'Storage'}, {name: 'AI services', label: 'AI'}];
 type PageName = typeof NAV[number]['name'];
 const fromHash = (): PageName => NAV.find(n => n.slug === window.location.hash.replace(/^#\/?/, ''))?.name ?? 'Overview';
 
@@ -60,7 +65,7 @@ function Home() {
     if (!item) return;
     setPageState(item.name);
     if (window.location.hash !== `#/${item.slug}`) history.pushState(null, '', `#/${item.slug}`);
-    document.querySelector('.main')?.scrollTo({top: 0});
+    window.scrollTo({top: 0}); // the document scrolls, not .main
   }, []);
 
   useEffect(() => {
@@ -199,17 +204,19 @@ function Home() {
           <button className="sidebar-search" onClick={() => setPalette(true)}>
             <Search size={14} /><span>Search & jump</span><kbd>Ctrl K</kbd>
           </button>
-          <div className="nav-label">Workspace</div>
-          <SidebarMenu className="nav-menu">
-            {NAV.map(({name: n, icon: Icon}, i) => (
-              <SidebarMenuItem key={n}>
-                <NavButton active={page === n} onClick={() => setPage(n)}>
-                  <Icon size={17} /><span>{n}</span>
-                  {counts[n] !== undefined ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : <kbd className="nav-key">{(i + 1) % 10}</kbd>}
-                </NavButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
+          {GROUPS.map(g => <div className="nav-group" key={g}>
+            <div className="nav-label">{g}</div>
+            <SidebarMenu className="nav-menu">
+              {NAV.map(({name: n, icon: Icon, group}, i) => group === g && (
+                <SidebarMenuItem key={n}>
+                  <NavButton active={page === n} onClick={() => setPage(n)}>
+                    <Icon size={17} /><span>{n}</span>
+                    {counts[n] !== undefined ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : <kbd className="nav-key">{(i + 1) % 10}</kbd>}
+                  </NavButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </div>)}
         </SidebarContent>
         <SidebarFooter>
           <div className="sidebar-bottom">
@@ -270,20 +277,17 @@ function Home() {
             </div>
           )}
 
-          {(page === 'Overview' || page === 'Resources') && <>
+          {page === 'Overview' && <>
             <StatCards d={d} />
             <div className="chart-layout">
               <ActivityPanel d={d} />
               <HealthPanel d={d} error={error} go={setPage} />
             </div>
-          </>}
-
-          {page === 'Overview' && <>
             <div className="services-grid">{containersPanel()}{tmuxPanel()}</div>
             <AiPanel d={d} busy={busy} pending={pending} onAgent={agentAction} />
             <EventsPanel d={d} now={now} />
           </>}
-          {page === 'Resources' && <><GpuPanel d={d} /><ProcessesPanel d={d} /></>}
+          {page === 'Resources' && <><StatCards d={d} /><ActivityPanel d={d} /><ProcessesPanel d={d} /><GpuPanel d={d} /></>}
           {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /></>}
           {page === 'Storage' && <StoragePanel d={d} />}
           {page === 'Containers' && containersPanel(true)}
@@ -299,6 +303,7 @@ function Home() {
           </footer>
         </div>
       </main>
+      <MobileTabs page={page} go={setPage} alerts={unread} />
 
       {/* Command palette */}
       <Dialog open={palette} onOpenChange={setPalette}>
@@ -387,6 +392,25 @@ function UptimeBlock({d, uptime}: {d: Status | null; uptime: number}) {
         </>}
       </div>
     </div>
+  );
+}
+
+/** Bottom tab bar on phones: the most-watched pages one tap away, the rest behind "More". */
+function MobileTabs({page, go, alerts}: {page: PageName; go: (p: string) => void; alerts: number}) {
+  const {setOpenMobile} = useSidebar();
+  const inTabs = TABS.some(t => t.name === page);
+  const more = NAV.find(n => n.name === page)!;
+  return (
+    <nav className="mobile-tabs" aria-label="Pages">
+      {TABS.map(t => {
+        const Icon = NAV.find(n => n.name === t.name)!.icon;
+        return <button key={t.name} className={page === t.name ? 'on' : ''} aria-current={page === t.name ? 'page' : undefined} onClick={() => go(t.name)}><Icon size={19} /><span>{t.label}</span></button>;
+      })}
+      <button className={inTabs ? '' : 'on'} onClick={() => setOpenMobile(true)} aria-label="More pages">
+        {inTabs ? <Menu size={19} /> : <more.icon size={19} />}<span>{inTabs ? 'More' : more.name.split(' ')[0]}</span>
+        {alerts > 0 && <em>{alerts}</em>}
+      </button>
+    </nav>
   );
 }
 
