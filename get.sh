@@ -64,7 +64,7 @@ main() {
     say "Node.js 22.13+ not found — downloading Node.js $NODE_LINE for linux-$arch"
     local base="https://nodejs.org/dist/latest-v${NODE_LINE}.x"
     fetch "$base/SHASUMS256.txt" > "$tmp/node.sums" || die "could not reach nodejs.org"
-    local file; file="$(grep -oE "node-v[0-9.]+-linux-${arch}\.tar\.gz$" "$tmp/node.sums" | head -1)"
+    local file; file="$(grep -m1 -oE "node-v[0-9.]+-linux-${arch}\.tar\.gz$" "$tmp/node.sums")"
     [ -n "$file" ] || die "could not find a Node.js build for linux-$arch"
     download "$base/$file" "$tmp/$file"
     (cd "$tmp" && grep " $file\$" node.sums | sha256sum -c --status) || die "Node.js download failed its checksum"
@@ -78,8 +78,10 @@ main() {
 
   # ---- Homebase release ----
   if [ -z "$version" ]; then
-    version="$(fetch "https://api.github.com/repos/$REPO/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')" \
-      || die "could not look up the latest release on GitHub"
+    # Read the whole response first: grep -m1 on a pipe would cut curl off mid-write (SIGPIPE) and pipefail aborts.
+    local release
+    release="$(fetch "https://api.github.com/repos/$REPO/releases/latest")" || die "could not look up the latest release on GitHub"
+    version="$(sed -nE '/"tag_name"/{s/.*"tag_name": *"([^"]+)".*/\1/p;q}' <<< "$release")"
     [ -n "$version" ] || die "could not look up the latest release on GitHub"
   fi
   local name="homebase-${version#v}"
