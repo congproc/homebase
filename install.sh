@@ -66,7 +66,7 @@ else
   mkdir -p "$APP"
   rm -rf "$APP/server" "$APP/dist" "$APP/system"
   cp -R "$SRC/server" "$SRC/dist" "$SRC/system" "$APP/"
-  for f in install.sh uninstall.sh config.example.json package.json README.md; do
+  for f in install.sh uninstall.sh config.example.json package.json README.md LICENSE; do
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$APP/"
   done
   chmod 755 "$APP/install.sh" "$APP/uninstall.sh" "$APP/system/install-power.py"

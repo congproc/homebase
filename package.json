@@ -41,7 +41,7 @@
   },
   "type": "module",
   "description": "Homebase — a private dashboard and control panel for a single Linux home server.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "files": [
     "server/",
     "dist/",

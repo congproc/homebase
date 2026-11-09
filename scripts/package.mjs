@@ -14,7 +14,7 @@ const stage = path.join(out, name);
 execFileSync(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'build'], {cwd: root, stdio: 'inherit'});
 rmSync(stage, {recursive: true, force: true});
 mkdirSync(stage, {recursive: true});
-for (const f of ['server', 'dist', 'system', 'install.sh', 'uninstall.sh', 'config.example.json', 'README.md']) {
+for (const f of ['server', 'dist', 'system', 'install.sh', 'uninstall.sh', 'config.example.json', 'README.md', 'LICENSE']) {
   cpSync(path.join(root, f), path.join(stage, f), {recursive: true, filter: src => !/__pycache__|\.pyc$/.test(src)});
 }
 // Runtime manifest only: the server has no npm dependencies.

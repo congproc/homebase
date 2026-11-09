@@ -129,3 +129,7 @@ Layout: `server/` (dependency-free Node agent), `app/` + `src/` + `components/ui
 ## Brand
 
 The mark is a lowercase **h** whose counter is a lit doorway; the dot is the wordmark's period and the live status light. In the dashboard the dot follows system health (ink when normal, amber when something needs attention, red and pulsing when critical or disconnected), and so does the browser-tab favicon. Masters and exports live in `brand/`. Colours: lime `#d1ee97`, ink `#101113`. Keep clear space of one stem width around the mark; don't use the regular cut below 24 px (use `homebase-symbol-small.svg`).
+
+## License
+
+[MIT](LICENSE) © 2026 congproc. `vendor/` keeps its own upstream license.
