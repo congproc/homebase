@@ -4,11 +4,13 @@ const pct1 = (v: number) => String(Math.round(v * 10) / 10);
 /** Swaps a button icon for a spinner while that exact action is in flight. */
 const Busy = ({on, size = 14, children}: {on: boolean; size?: number; children: React.ReactNode}) => on ? <RefreshCw size={size} className="spin" /> : <>{children}</>;
 import {
-  Activity, AlertTriangle, ArrowDown, Clock, ArrowUp, ArrowUpDown, Box, Check, ChevronRight, Command, Cpu, HardDrive, Layers,
+  Activity, AlertTriangle, ArrowDown, Clock, ArrowUp, ArrowUpDown, Box, Check, ChevronRight, Copy, Cpu, HardDrive, Layers,
   Gauge, MemoryStick, Network, Play, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, WifiOff, X,
 } from 'lucide-react';
 import {Table, TableHeader, TableBody, TableRow, TableHead, TableCell} from '@/components/ui/table';
 import {AreaChart, Ring, Sparkline} from './charts';
+import {ClaudeIcon, CodexIcon, OllamaIcon} from './agent-icons';
+import {toast} from 'sonner';
 import {Num} from './motion';
 import {ago, bytes, clock, diskHealth, elapsed, health, levelColor, levelFor, rate} from '../lib/format';
 import type {Container, Proc, Status} from '../lib/types';
@@ -245,10 +247,10 @@ export function TmuxPanel({d, now, busy, pending, onOpen, onCreate, onKill, go}:
 
 /* ---------- AI ---------- */
 
-const AGENT_META: Record<string, {title: string; cls: string; icon: React.ReactNode; tagline: string}> = {
-  claude: {title: 'Claude Code', cls: 'logo-claude', icon: <span className="claude-glyph">✳</span>, tagline: 'Anthropic coding agent'},
-  codex: {title: 'Codex', cls: 'logo-codex', icon: <Command size={20} />, tagline: 'OpenAI coding agent'},
-  ollama: {title: 'Ollama', cls: 'logo-ollama', icon: <Layers size={20} />, tagline: 'Local model runtime'},
+const AGENT_META: Record<string, {title: string; cls: string; icon: React.ReactNode; tagline: string; install: string}> = {
+  claude: {title: 'Claude Code', cls: 'logo-claude', icon: <ClaudeIcon size={21} />, tagline: 'Anthropic coding agent', install: 'curl -fsSL https://claude.ai/install.sh | bash'},
+  codex: {title: 'Codex', cls: 'logo-codex', icon: <CodexIcon size={21} />, tagline: 'OpenAI coding agent', install: 'npm install -g @openai/codex'},
+  ollama: {title: 'Ollama', cls: 'logo-ollama', icon: <OllamaIcon size={22} />, tagline: 'Local model runtime', install: 'curl -fsSL https://ollama.com/install.sh | sh'},
 };
 
 export type AgentAction = (name: string, action: 'start' | 'stop' | 'restart', pid?: number) => void;
@@ -258,25 +260,35 @@ export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null
   return (
     <Panel title="AI services" sub="Coding agents and local models on this host">
       <div className="agents">{agents.map(a => {
-        const meta = AGENT_META[a.name] || {title: a.name, cls: '', icon: <Layers size={20} />, tagline: ''};
+        const meta = AGENT_META[a.name] || {title: a.name, cls: '', icon: <Layers size={20} />, tagline: '', install: ''};
         const procs = a.processes || [];
         const live = procs.length > 0 || (a.name === 'ollama' && !!d?.ollamaOnline);
         const cpu = procs.reduce((n, p) => n + p.cpu, 0);
         const mem = procs.reduce((n, p) => n + p.memory, 0);
+        const missing = !!d && a.installed === false && !live;
+        const state = !d ? 'pending' : live ? 'live' : missing ? 'missing' : 'idle';
         return (
-          <div className={`agent ${live ? 'live' : ''}`} key={a.name}>
+          <div className={`agent ${live ? 'live' : ''} ${missing ? 'missing' : ''}`} key={a.name}>
             <div className="agent-top">
-              <span className={`agent-logo ${meta.cls}`}>{meta.icon}</span>
+              <span className={`agent-logo ${meta.cls}`}>{meta.icon}<i className={`agent-dot ${state}`} title={live ? 'Running' : missing ? 'Not installed' : 'Idle'} /></span>
               <div><h3>{meta.title}</h3><p>{meta.tagline}</p></div>
-              <Pill on={live}>{live ? 'Running' : a.installed ? 'Idle' : d ? 'Not installed' : 'Connecting'}</Pill>
+              <Pill on={live}>{live ? 'Running' : missing ? 'Not installed' : d ? 'Idle' : 'Connecting'}</Pill>
             </div>
-            <div className="agent-metrics">
-              <div><small>{a.name === 'ollama' ? 'Models' : 'Processes'}</small><strong>{a.name === 'ollama' ? d?.models.length ?? 0 : procs.length}</strong></div>
+            {missing && meta.install ? (
+              <div className="agent-install">
+                <small>Not found on this host’s PATH. Install with:</small>
+                <div className="setup-command">
+                  <code>{meta.install}</code>
+                  <button className="button small" aria-label={`Copy ${meta.title} install command`} title="Copy" onClick={() => navigator.clipboard.writeText(meta.install).then(() => toast.success('Install command copied')).catch(() => toast.error('Copy the command manually'))}><Copy size={13} /></button>
+                </div>
+              </div>
+            ) : <div className="agent-metrics">
+              <div title={a.name === 'ollama' ? 'Models loaded in memory' : undefined}><small>{a.name === 'ollama' ? 'Models' : 'Processes'}</small><strong>{a.name === 'ollama' ? d?.models.length ?? 0 : procs.length}</strong></div>
               <div><small>CPU</small><strong>{procs.length ? `${cpu.toFixed(1)}%` : '—'}</strong></div>
               <div><small>Memory</small><strong>{procs.length ? `${mem.toFixed(1)}%` : '—'}</strong></div>
-              <div><small>Longest</small><strong>{procs.length ? elapsed(Math.max(...procs.map(p => p.elapsed))) : '—'}</strong></div>
-            </div>
-            {d && a.installed !== false && (
+              <div title="Longest-running process"><small>Running for</small><strong>{procs.length ? elapsed(Math.max(...procs.map(p => p.elapsed))) : '—'}</strong></div>
+            </div>}
+            {d && !missing && (
               <div className="agent-actions">
                 {a.name === 'ollama' ? (live
                   ? <>

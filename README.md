@@ -29,8 +29,8 @@ Upgrade later with the **Update** button that appears in the dashboard's top bar
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.5.0.tar.gz.sha256
-tar xzf homebase-1.5.0.tar.gz && cd homebase-1.5.0
+sha256sum -c homebase-1.5.1.tar.gz.sha256
+tar xzf homebase-1.5.1.tar.gz && cd homebase-1.5.1
 ./install.sh --linger
 ```
 

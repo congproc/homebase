@@ -427,11 +427,22 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
 .agent-top { display: flex; align-items: center; gap: 11px; }
 .agent-top > div { flex: 1; min-width: 0; }
 .agent-top .status { align-self: flex-start; }
-.agent-logo { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; }
-.claude-glyph { font-size: 26px; line-height: 1; }
-.logo-claude { color: #e0a084; background: rgba(217, 119, 87, .16); }
-.logo-codex { color: #d8dfd2; background: rgba(216, 223, 210, .08); }
-.logo-ollama { color: var(--violet); background: rgba(180, 160, 232, .12); }
+.agent-logo { position: relative; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06), inset 0 1px 0 rgba(255, 255, 255, .06); transition: transform .25s var(--ease-out); }
+.agent:hover .agent-logo { transform: scale(1.04); }
+.logo-claude { color: #e8916f; background: linear-gradient(145deg, rgba(217, 119, 87, .26), rgba(217, 119, 87, .1)); box-shadow: inset 0 0 0 1px rgba(217, 119, 87, .28); }
+.logo-codex { color: #e6e9e3; background: linear-gradient(145deg, rgba(230, 233, 227, .14), rgba(230, 233, 227, .04)); }
+.logo-ollama { color: #f2f2f0; background: linear-gradient(145deg, rgba(242, 242, 240, .16), rgba(242, 242, 240, .05)); }
+.agent.missing .agent-logo { filter: grayscale(1); opacity: .55; }
+.agent-dot { position: absolute; right: -3px; bottom: -3px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--surface-2); background: var(--text-3); }
+.agent-dot.live { background: var(--lime); }
+.agent-dot.live::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 1.5px solid var(--lime); animation: agent-ping 2.4s var(--ease-out) infinite; }
+.agent-dot.missing, .agent-dot.pending { background: var(--surface-3); }
+@keyframes agent-ping { 0% { transform: scale(.8); opacity: .8; } 80%, 100% { transform: scale(2.1); opacity: 0; } }
+.agent-install { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 8px; }
+.agent-install small { font-size: 11.5px; color: var(--text-3); }
+.agent-install .setup-command { padding: 4px 4px 4px 10px; }
+.agent-install code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); overflow-wrap: anywhere; flex: 1; }
 .agent h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .agent-top p { font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
 .agent-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
