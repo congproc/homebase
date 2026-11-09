@@ -138,7 +138,8 @@ fi
 
 if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo no)" != yes ]; then
   if [ "$LINGER" -eq 1 ]; then
-    loginctl enable-linger "$USER" && say "Homebase will now start at boot, even before you log in."
+    loginctl enable-linger "$USER" && say "Homebase will now start at boot, even before you log in." \
+      || echo "  Could not enable start-at-boot as $USER. Run once: sudo loginctl enable-linger $USER"
   else
     echo "  Note: Homebase runs only while you are logged in. To start it at boot: loginctl enable-linger $USER"
   fi

@@ -8,6 +8,14 @@ It runs as an unprivileged **user** service, listens only on `127.0.0.1`, and ha
 
 Requirements: Linux with systemd, Node.js **22.13+**. Optional: Docker, tmux, Ollama, Tailscale, `nvidia-smi` for NVIDIA GPUs (missing tools simply show as unavailable). AMD and Intel GPUs need nothing extra.
 
+One line (downloads the latest release, verifies its checksum, and fetches Node.js 24 into the install folder if the machine has no Node.js 22.13+):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/congproc/homebase/main/get.sh | bash
+```
+
+Run as your normal user (not root). Re-run the same line to upgrade. Pass options after `bash -s --`, e.g. `... | bash -s -- --tailscale --port 8790`; `--no-linger` skips start-at-boot. Read [`get.sh`](get.sh) first if you prefer.
+
 With git (no npm needed — the built dashboard is committed):
 
 ```sh
