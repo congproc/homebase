@@ -53,6 +53,15 @@ test('smartView: NVMe wear, bytes written and warnings', () => {
   assert.equal(smartView({passed: false}).level, 'critical');
 });
 
+test('smartView: impossible power-on hours are flagged, not shown as a lifetime', () => {
+  const bogus = smartView({passed: true, powerOnHours: 896084});
+  assert.equal(bogus.powerOnHours, null);
+  assert.equal(bogus.powerOnRaw, 896084);
+  const real = smartView({passed: true, powerOnHours: 43800});
+  assert.equal(real.powerOnHours, 43800);
+  assert.equal(real.powerOnRaw, null);
+});
+
 test('smartView: ATA attributes and states', () => {
   const s = smartView({passed: true, ata: [{id: 5, name: 'Reallocated_Sector_Ct', value: 100, raw: 8}, {id: 231, name: 'SSD_Life_Left', value: 88, raw: 88}, {id: 241, name: 'Total_LBAs_Written', value: 100, raw: 1000}]});
   assert.equal(s.reallocated, 8);

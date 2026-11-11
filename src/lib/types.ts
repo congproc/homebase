@@ -13,7 +13,7 @@ export type Gpu = {
 export type DiskVolume = {name: string; path: string; type: string; depth: number; fstype: string | null; label: string | null; size: number; mounts: string[]; used?: number; total?: number; available?: number; percent?: number};
 export type DiskSmart = {
   state: 'ok' | 'standby' | 'not-installed' | 'needs-setup' | 'error'; error?: string;
-  passed?: boolean | null; temperature?: number | null; powerOnHours?: number | null; powerCycles?: number | null; life?: number | null;
+  passed?: boolean | null; temperature?: number | null; powerOnHours?: number | null; powerOnRaw?: number | null; powerCycles?: number | null; life?: number | null;
   written?: number | null; read?: number | null; unsafeShutdowns?: number | null; mediaErrors?: number | null; errorLog?: number | null; availableSpare?: number | null;
   reallocated?: number | null; pending?: number | null; uncorrectable?: number | null; crcErrors?: number | null;
   interfaceSpeed?: string | null; formFactor?: string | null; rotationRate?: number | null; warnings?: string[]; level?: 'ok' | 'warn' | 'critical';

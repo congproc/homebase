@@ -8,6 +8,9 @@ import {join} from 'node:path';
 const exec = promisify(execFile);
 
 const HELPER = '/usr/local/sbin/homebase-power';
+// Some firmware (e.g. Intel 520 series, firmware 400i) reports a garbage power-on counter; anything above
+// ~17 years of continuous use cannot be real, so it is shown as unreliable instead of as a lifetime.
+export const MAX_POWER_ON_HOURS = 150000;
 const HISTORY_MS = 15 * 60 * 1000, GAP_MS = 30000, SMART_EVERY = 10 * 60 * 1000, SECTOR = 512;
 const LSBLK_COLS = 'NAME,PATH,TYPE,SIZE,MODEL,SERIAL,VENDOR,REV,ROTA,TRAN,RM,STATE,FSTYPE,LABEL,MOUNTPOINTS,FSUSED,FSSIZE,FSAVAIL';
 // Whole disks worth showing; zram, ram, loop, optical and device-mapper nodes are left out.
@@ -61,6 +64,8 @@ export function smartView(s) {
   const life = Number.isFinite(n.percentage_used) ? Math.max(0, 100 - n.percentage_used) : wearAttr ? wearAttr.value : null;
   const written = Number.isFinite(n.data_units_written) ? n.data_units_written * 512000 : raw(241) != null ? raw(241) * SECTOR : null;
   const read = Number.isFinite(n.data_units_read) ? n.data_units_read * 512000 : raw(242) != null ? raw(242) * SECTOR : null;
+  const poh = Number.isFinite(s.powerOnHours) ? s.powerOnHours : null;
+  const pohBogus = poh != null && poh > MAX_POWER_ON_HOURS;
   const failing = (s.ata || []).filter(a => a.failing).map(a => a.name);
   const warnings = [];
   if (s.passed === false) warnings.push('SMART overall health check failed');
@@ -73,7 +78,7 @@ export function smartView(s) {
   if (failing.length) warnings.push(`Failing: ${failing.join(', ')}`);
   if (life != null && life <= 10) warnings.push(`${life}% rated life left`);
   return {
-    state: 'ok', passed: s.passed ?? null, temperature: s.temperature ?? null, powerOnHours: s.powerOnHours ?? null, powerCycles: s.powerCycles ?? null,
+    state: 'ok', passed: s.passed ?? null, temperature: s.temperature ?? null, powerOnHours: pohBogus ? null : poh, powerOnRaw: pohBogus ? poh : null, powerCycles: s.powerCycles ?? null,
     life, written, read, unsafeShutdowns: n.unsafe_shutdowns ?? raw(192) ?? null, mediaErrors: n.media_errors ?? null, errorLog: n.num_err_log_entries ?? null,
     availableSpare: n.available_spare ?? null, reallocated: raw(5), pending: raw(197), uncorrectable: raw(198), crcErrors: raw(199),
     interfaceSpeed: s.interfaceSpeed ?? null, formFactor: s.formFactor ?? null, rotationRate: s.rotationRate ?? null, warnings,

@@ -45,7 +45,7 @@ function SmartDetails({d}: {d: Disk}) {
   if (s.state === 'error') return <p className="dim drive-note">SMART could not be read: {s.error}</p>;
   const rows: [string, React.ReactNode][] = [
     ['Overall assessment', s.passed == null ? '—' : s.passed ? 'Passed' : <span style={{color: 'var(--red)'}}>Failed</span>],
-    ['Power-on time', s.powerOnHours != null ? `${hours(s.powerOnHours)} (${s.powerOnHours.toLocaleString()} h)` : '—'],
+    ['Power-on time', s.powerOnHours != null ? `${hours(s.powerOnHours)} (${s.powerOnHours.toLocaleString()} h)` : s.powerOnRaw != null ? <span title="This drive's firmware reports an impossible power-on counter">Not reliable (drive reports {s.powerOnRaw.toLocaleString()} h)</span> : '—'],
     ['Power cycles', count(s.powerCycles)],
     ['Unsafe shutdowns', count(s.unsafeShutdowns)],
     ...(s.availableSpare != null ? [['Available spare', `${s.availableSpare}%`] as [string, string]] : []),
@@ -78,7 +78,7 @@ function DrivePanel({d}: {d: Disk}) {
     ['Write', rate(d.io.write), `${d.io.writeIops.toFixed(0)} operations/s`],
     ['Busy', `${d.io.util}%`, 'Share of time the drive had requests in flight'],
     ['Life left', s?.life != null ? `${s.life}%` : '—', 'Manufacturer wear estimate (100% = new)'],
-    ['Power-on', s?.powerOnHours != null ? hours(s.powerOnHours) : '—'],
+    ['Power-on', s?.powerOnHours != null ? hours(s.powerOnHours) : s?.powerOnRaw != null ? 'Not reliable' : '—', s?.powerOnRaw != null ? `Drive firmware reports ${s.powerOnRaw.toLocaleString()} h, which is impossible` : undefined],
   ];
   const sub = [d.path, `${d.transport ? (TRANSPORT[d.transport] || d.transport.toUpperCase()) + ' ' : ''}${d.kind}`, decimal(d.size), d.link, d.firmware && `firmware ${d.firmware}`, d.serial && `S/N ${d.serial}`].filter(Boolean).join(' · ');
   const series = [{label: 'Read', color: 'var(--sky)', values: hist.map(p => p.read)}, {label: 'Write', color: 'var(--pink)', values: hist.map(p => p.write)}];
