@@ -1,5 +1,6 @@
 #!/usr/bin/python3 -I
-"""Install (or remove) Homebase's optional root integration: nightly smart sleep and system-service control.
+"""Install (or remove) Homebase's optional root integration: nightly smart sleep, system-service control,
+SMART health and turning the desktop (GUI) on or off.
 
   sudo python3 system/install-power.py --user <account>     install or update
   python3 system/install-power.py --check --user <account>  validate everything, change nothing
@@ -47,11 +48,14 @@ USERNAME = re.compile(r'[a-z_][a-z0-9_-]{0,31}\Z')
 
 def sudoers_for(user):
     return (f'# Installed by Homebase. Validated sleep-policy updates and start/stop/restart of custom units in\n'
-            f'# /etc/systemd/system, and read-only SMART health of whole disks, through a fixed-purpose helper;\n'
+            f'# /etc/systemd/system, read-only SMART health of whole disks, and desktop on/off (boot target +\n'
+            f'# display manager), through a fixed-purpose helper;\n'
             f'# arguments are validated by the helper. No shell.\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power apply\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power service *\n'
-            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power smart *\n')
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power smart *\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop on\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop off\n')
 
 
 def run(*args, **kw):

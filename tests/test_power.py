@@ -174,3 +174,51 @@ class LockAndNameHardeningTest(unittest.TestCase):
                  patch.object(power.subprocess,'run',return_value=SimpleNamespace(returncode=power.STANDBY,stdout='')) as run:
                 self.assertEqual(power.smart('nvme0n1'),{'standby':True})
                 self.assertEqual(run.call_args[0][0][-1],'/dev/nvme0n1')
+
+class DesktopTest(unittest.TestCase):
+    loaded = SimpleNamespace(returncode=0, stdout='loaded\n')
+
+    def test_rejects_unknown_actions_and_non_root(self):
+        for action in ('', 'restart', 'on;reboot', 'ON'):
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                power.desktop(action)
+        with patch.object(power.os, 'geteuid', return_value=1000), self.assertRaises(ValueError):
+            power.desktop('off')
+
+    def test_refuses_without_display_manager(self):
+        with patch.object(power.os, 'geteuid', return_value=0), \
+             patch.object(power, 'systemctl', return_value=SimpleNamespace(returncode=0, stdout='not-found\n')), \
+             patch.object(power.subprocess, 'run') as run, self.assertRaises(ValueError):
+            power.desktop('off')
+        run.assert_not_called()
+
+    def test_off_sets_text_boot_then_stops_display_manager(self):
+        with patch.object(power.os, 'geteuid', return_value=0), patch.object(power, 'systemctl', return_value=self.loaded), \
+             patch.object(power.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stderr='')) as run:
+            self.assertEqual(power.desktop('off'), 0)
+        self.assertEqual([c[0][0] for c in run.call_args_list],
+                         [['/usr/bin/systemctl', 'set-default', 'multi-user.target'], ['/usr/bin/systemctl', 'stop', 'display-manager.service']])
+
+    def test_on_sets_graphical_boot_then_starts_it(self):
+        with patch.object(power.os, 'geteuid', return_value=0), patch.object(power, 'systemctl', return_value=self.loaded), \
+             patch.object(power.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stderr='')) as run:
+            power.desktop('on')
+        self.assertEqual([c[0][0] for c in run.call_args_list],
+                         [['/usr/bin/systemctl', 'set-default', 'graphical.target'], ['/usr/bin/systemctl', 'start', 'graphical.target']])
+
+    def test_failure_is_reported(self):
+        with patch.object(power.os, 'geteuid', return_value=0), patch.object(power, 'systemctl', return_value=self.loaded), \
+             patch.object(power.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr='Job failed')), \
+             self.assertRaisesRegex(ValueError, 'Job failed'):
+            power.desktop('on')
+
+
+class SudoersTest(unittest.TestCase):
+    def test_desktop_rule_allows_only_on_and_off(self):
+        loader = importlib.machinery.SourceFileLoader('installer', str(pathlib.Path(__file__).resolve().parents[1] / 'system/install-power.py'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        installer = importlib.util.module_from_spec(spec)
+        loader.exec_module(installer)
+        rules = [l for l in installer.sudoers_for('alice').splitlines() if 'desktop' in l and not l.startswith('#')]
+        self.assertEqual(rules, ['alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop on',
+                                 'alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop off'])

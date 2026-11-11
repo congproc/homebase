@@ -29,8 +29,8 @@ Upgrade later with the **Update** button that appears in the dashboard's top bar
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.6.3.tar.gz.sha256
-tar xzf homebase-1.6.3.tar.gz && cd homebase-1.6.3
+sha256sum -c homebase-1.6.4.tar.gz.sha256
+tar xzf homebase-1.6.4.tar.gz && cd homebase-1.6.4
 ./install.sh --linger
 ```
 
@@ -50,9 +50,9 @@ Open http://127.0.0.1:8787. Useful options (`./install.sh --help`):
 
 Re-running `install.sh` upgrades in place and keeps your settings. Remove with `./uninstall.sh` (add `--purge` to delete settings and alert history).
 
-### Optional root integration (sleep schedule, system services)
+### Optional root integration (sleep schedule, system services, SMART, desktop on/off)
 
-Nightly smart sleep, start/stop of system services and SMART drive health need a one-time root setup. Review `system/` first, then:
+Nightly smart sleep, start/stop of system services, SMART drive health and turning the desktop on/off need a one-time root setup. Review `system/` first, then:
 
 ```sh
 python3 system/install-power.py --check --user "$USER"   # validate only, changes nothing
@@ -125,7 +125,7 @@ Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `
 - **AI services:** Claude Code / Codex sessions (start in tmux, stop), Ollama service and loaded models.
 - **Hosted services:** custom user units and system units with health checks, start/stop/restart, per-service "prevent sleep".
 - **Traffic:** devices, sign-ins, security alerts (failed or rate-limited sign-ins, new public devices — checked every 20 s even with no dashboard open), sign out / block IP, heatmap, Tailscale routes and devices.
-- **Sleep & power:** schedule, wake time, safeguards, last nightly result.
+- **Sleep & power:** schedule, wake time, safeguards, last nightly result, and a **Desktop (GUI)** switch: turn the graphical desktop off (boots to text mode, frees its memory and the GPU; SSH, Tailscale, services and tmux keep running) or back on. Needs the root integration.
 - Keyboard: `Ctrl K` command palette, `1`–`9` pages, `R` refresh. Installable as an app (PWA manifest). The favicon and logo status light turn amber/red when the server needs attention.
 
 ## Development

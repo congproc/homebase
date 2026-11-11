@@ -5,6 +5,7 @@ import {getTraffic,updateControl} from './traffic.mjs';
 import {checkAlerts,getAlerts,unreadAlerts,updateAlerts} from './alerts.mjs';
 import {readGpus} from './gpu.mjs';
 import {readDisks} from './disks.mjs';
+import {getDesktop,desktopAction} from './desktop.mjs';
 import {VERSION,applyUpdate,checkForUpdate,startUpdateChecks,updateAvailable,updateStatus} from './update.mjs';
 import {tmuxNew,tmuxKill,serviceAction,startAgent,stopAgent,SESSION_NAME} from './actions.mjs';
 import http from 'node:http';
@@ -78,6 +79,7 @@ const server=http.createServer(async(req,res)=>{
  await markViewed();
 
  if(req.method==='GET'&&url.pathname==='/api/power')return send(res,200,await getPowerState());
+ if(req.method==='GET'&&url.pathname==='/api/desktop')return send(res,200,await getDesktop());
  if(req.method==='GET'&&url.pathname==='/api/alerts'){await checkAlerts();return send(res,200,await getAlerts());}
  if(req.method==='GET'&&url.pathname==='/api/traffic')return send(res,200,await getTraffic(url.searchParams.get('site')||undefined,url.searchParams.get('range')||undefined));
  if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,token,version:VERSION,updateAvailable:updateAvailable(),alertsUnread:await unreadAlerts().catch(()=>0)});
@@ -95,6 +97,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/traffic/control'){try{const c=await updateControl(payload);const {action,sid,ip}=payload;record(`traffic: ${action} ${sid||ip}`);return send(res,200,c)}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/power'){try{const power=await savePowerSettings(payload);record('Sleep settings updated');return send(res,200,power)}catch(e){return send(res,400,{error:e.message})}}
  const {kind,id,action,pid}=payload;let result;
+ if(kind==='desktop'){try{if(!['on','off'].includes(action))return send(res,400,{error:'Unsupported action'});const out=await desktopAction(action);record(`desktop: turned ${action}`);return send(res,200,out);}catch(e){return send(res,400,{error:e.message})}}
  if(kind==='service'||kind==='agent'){try{let out;
   if(kind==='service')out=await serviceAction(id,action);
   else if(action==='start'&&['claude','codex'].includes(id))out=await startAgent(snapshot,id);

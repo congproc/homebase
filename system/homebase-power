@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control and SMART reads."""
+"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads and desktop on/off."""
 import fcntl
 import json
 import os
@@ -168,6 +168,28 @@ def control_service(action, unit):
         raise ValueError(result.stderr.strip() or f'systemctl {action} failed')
     return 0
 
+DESKTOP_ACTIONS = ('on', 'off')
+
+def desktop(action):
+    """Turn the graphical desktop on or off, now and for future boots.
+
+    off: boot to multi-user.target and stop the display manager (signs out desktop sessions; SSH, Tailscale and
+         services keep running). on: boot to graphical.target and start it now."""
+    if action not in DESKTOP_ACTIONS:
+        raise ValueError('Unsupported desktop action')
+    if os.geteuid() != 0:
+        raise ValueError('Desktop control requires administrator privileges')
+    dm = systemctl('system', 'show', '--property=LoadState', '--value', 'display-manager.service')
+    if dm.returncode or dm.stdout.strip() != 'loaded':
+        raise ValueError('No desktop (display manager) is installed on this machine')
+    target, verb, unit = ('graphical.target', 'start', 'graphical.target') if action == 'on' else ('multi-user.target', 'stop', 'display-manager.service')
+    steps = [['/usr/bin/systemctl', 'set-default', target], ['/usr/bin/systemctl', verb, unit]]
+    for args in steps:
+        result = subprocess.run(args, text=True, capture_output=True, timeout=90)
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or ' '.join(args[1:]) + ' failed')
+    return 0
+
 DISK_NAME = re.compile(r'(sd[a-z]{1,3}|nvme\d{1,3}n\d{1,3}|vd[a-z]{1,3}|hd[a-z]|mmcblk\d{1,3})\Z')
 SMARTCTL = ('/usr/sbin/smartctl', '/usr/bin/smartctl')
 STANDBY = 99
@@ -237,6 +259,8 @@ def main():
         return 1 if blockers else 0
     elif command == 'service' and len(sys.argv) == 4:
         return control_service(sys.argv[2], sys.argv[3])
+    elif command == 'desktop' and len(sys.argv) == 3:
+        return desktop(sys.argv[2])
     elif command == 'smart' and len(sys.argv) == 3:
         print(json.dumps(smart(sys.argv[2])))
     elif command == 'wake-time' and len(sys.argv) == 2:

@@ -4,6 +4,7 @@ import {useConfirm} from './components/confirm';
 import {Switch} from '@/components/ui/switch';
 import {toast} from 'sonner';
 import {Empty, Panel, Pill, Skeleton} from './components/panels';
+import DesktopPanel from './DesktopPanel';
 
 type Config = {enabled: boolean; sleepTime: string; wakeTime: string; blockSsh: boolean; blockTmux: boolean; services: Record<string, boolean>};
 type HostedService = {id: string; remoteUrl?: string; unit: string; name: string; description: string; scope: string; state: string; subState: string; pid: number | null; memory: number | null; cpuSeconds: number | null; startedAt: string | null; bootEnabled: boolean; restart: string; type: string; preventSleep: boolean; blockingNow: boolean; url?: string; port?: number; manual?: boolean; error?: string; responding?: boolean; endpointStatus?: number; job?: {timer: string | null; next: string | null; lastStart: string | null; lastExit: string | null; result: string | null; exitStatus: number}};
@@ -269,6 +270,8 @@ export default function PowerPanel({mode, token}: {mode: 'services' | 'settings'
             <button className="button primary" disabled={disabled || !dirty}>{saving ? 'Saving…' : 'Save settings'}</button>
           </div>
         </form>
+
+        <DesktopPanel token={token} />
 
         <Panel title="Last nightly check" sub={power.lastAttempt || 'No previous attempt recorded'} action={<Pill on={/resum|suspend/i.test(power.lastOutcome)}>{power.lastOutcome}</Pill>}>
           <div className="sleep-history">
