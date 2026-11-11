@@ -51,6 +51,15 @@ export function volumesOf(dev) {
 
 const KIND = (d) => d.transport === 'usb' || d.removable ? 'Removable' : d.transport === 'nvme' ? 'NVMe SSD' : d.rotational ? 'HDD' : d.name.startsWith('mmcblk') ? 'eMMC / SD' : d.name.startsWith('vd') || d.name.startsWith('xvd') ? 'Virtual disk' : 'SSD';
 
+// ATA host read/write counters: the unit is in the attribute name smartctl assigns (Host_Writes_32MiB,
+// Lifetime_Writes_GiB, ...). Total_LBAs_Written and unnamed variants count 512-byte sectors.
+export function ataBytesUnit(name = '') {
+  const m = /_(\d+)?([KMGT])i?B$/i.exec(name);
+  if (!m) return SECTOR;
+  const pow = {K: 1, M: 2, G: 3, T: 4}[m[2].toUpperCase()];
+  return Number(m[1] || 1) * 1024 ** pow;
+}
+
 /** Normalizes the helper's SMART summary into what the dashboard shows. */
 export function smartView(s) {
   if (!s) return null;
@@ -62,8 +71,9 @@ export function smartView(s) {
   // Remaining life: NVMe percentage_used, else a normalized ATA wear attribute (100 = new).
   const wearAttr = [231, 202, 233, 177].map(attr).find(a => a && Number.isFinite(a.value) && a.value <= 100);
   const life = Number.isFinite(n.percentage_used) ? Math.max(0, 100 - n.percentage_used) : wearAttr ? wearAttr.value : null;
-  const written = Number.isFinite(n.data_units_written) ? n.data_units_written * 512000 : raw(241) != null ? raw(241) * SECTOR : null;
-  const read = Number.isFinite(n.data_units_read) ? n.data_units_read * 512000 : raw(242) != null ? raw(242) * SECTOR : null;
+  const ataBytes = id => raw(id) != null ? raw(id) * ataBytesUnit(attr(id).name) : null;
+  const written = Number.isFinite(n.data_units_written) ? n.data_units_written * 512000 : ataBytes(241);
+  const read = Number.isFinite(n.data_units_read) ? n.data_units_read * 512000 : ataBytes(242);
   const poh = Number.isFinite(s.powerOnHours) ? s.powerOnHours : null;
   const pohBogus = poh != null && poh > MAX_POWER_ON_HOURS;
   const failing = (s.ata || []).filter(a => a.failing).map(a => a.name);
@@ -72,9 +82,15 @@ export function smartView(s) {
   if (n.critical_warning) warnings.push(`NVMe critical warning flags: 0x${Number(n.critical_warning).toString(16)}`);
   if (Number.isFinite(n.available_spare) && Number.isFinite(n.available_spare_threshold) && n.available_spare <= n.available_spare_threshold) warnings.push('Spare blocks at or below threshold');
   if (n.media_errors > 0) warnings.push(`${n.media_errors} media errors`);
-  for (const [id, label] of [[5, 'reallocated sectors'], [197, 'pending sectors'], [198, 'uncorrectable sectors'], [187, 'reported uncorrectable errors']]) {
+  for (const [id, label] of [[5, 'reallocated sectors'], [197, 'pending sectors'], [198, 'uncorrectable sectors']]) {
     const v = raw(id); if (v > 0) warnings.push(`${v} ${label}`);
   }
+  // 187: the raw value is a real error count only as the standard Reported_Uncorrect. Under vendor names
+  // (SandForce/Intel Uncorrectable_Error_Cnt, ...) the raw value is an internal counter that grows on healthy
+  // drives, so trust the drive's own normalized score (100 = no errors) instead.
+  const a187 = attr(187);
+  if (a187?.name === 'Reported_Uncorrect' || !a187?.name) { if (raw(187) > 0) warnings.push(`${raw(187)} reported uncorrectable errors`); }
+  else if (Number.isFinite(a187.value) && a187.value < 100) warnings.push(`Drive reports uncorrectable errors (score ${a187.value}/100)`);
   if (failing.length) warnings.push(`Failing: ${failing.join(', ')}`);
   if (life != null && life <= 10) warnings.push(`${life}% rated life left`);
   return {

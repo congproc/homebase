@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, dirname} from 'node:path';
-import {parseDiskstats, volumesOf, smartView, createDiskReader} from '../server/disks.mjs';
+import {parseDiskstats, volumesOf, smartView, createDiskReader, ataBytesUnit} from '../server/disks.mjs';
 
 const STATS = (sdaRead, sdaBusy) => `   7       0 loop0 52 0 1324 36 0 0 0 0 0 22 36 0 0 0 0 0 0
    8       0 sda 100 0 ${sdaRead} 0 50 0 2000 0 0 ${sdaBusy} 0 0 0 0 0 0 0
@@ -60,6 +60,23 @@ test('smartView: impossible power-on hours are flagged, not shown as a lifetime'
   const real = smartView({passed: true, powerOnHours: 43800});
   assert.equal(real.powerOnHours, 43800);
   assert.equal(real.powerOnRaw, null);
+});
+
+test('smartView: Intel/SandForce 32 MiB counters and vendor attribute 187', () => {
+  const MiB = 1024 ** 2;
+  const s = smartView({passed: true, ata: [
+    {id: 187, name: 'Uncorrectable_Error_Cnt', value: 100, worst: 100, thresh: 50, raw: 4678168},
+    {id: 241, name: 'Host_Writes_32MiB', value: 100, raw: 43066}, {id: 242, name: 'Host_Reads_32MiB', value: 100, raw: 70136}]});
+  assert.equal(s.written, 43066 * 32 * MiB);
+  assert.equal(s.read, 70136 * 32 * MiB);
+  assert.deepEqual(s.warnings, []);
+  assert.equal(s.level, 'ok');
+  const worn = smartView({passed: true, ata: [{id: 187, name: 'Uncorrectable_Error_Cnt', value: 92, thresh: 50, raw: 9}]});
+  assert.deepEqual(worn.warnings, ['Drive reports uncorrectable errors (score 92/100)']);
+  const std = smartView({passed: true, ata: [{id: 187, name: 'Reported_Uncorrect', value: 100, raw: 3}]});
+  assert.deepEqual(std.warnings, ['3 reported uncorrectable errors']);
+  assert.equal(ataBytesUnit('Lifetime_Writes_GiB'), 1024 ** 3);
+  assert.equal(ataBytesUnit('Total_LBAs_Written'), 512);
 });
 
 test('smartView: ATA attributes and states', () => {
