@@ -1,6 +1,6 @@
 # Homebase
 
-A private dashboard and control panel for one Linux home server: CPU, memory, drives (health, temperature, throughput, filesystems) and network, Docker containers, tmux sessions, Claude Code / Codex / Ollama, systemd services, visitor traffic for your own sites, and a smart nightly sleep schedule with RTC wake.
+A private dashboard and control panel for one Linux home server: CPU, memory, drives (health, temperature, throughput, filesystems) and network, Docker containers, tmux sessions, Claude Code / Codex / Ollama, systemd services, visitor traffic for your own sites, wall power and electricity cost from a Tapo smart plug, and a smart nightly sleep schedule with RTC wake. Pages for things a machine doesn't have (no Docker, no GPU, no plug…) hide themselves.
 
 It runs as an unprivileged **user** service, listens only on `127.0.0.1`, and has no npm runtime dependencies — a release needs nothing but Node.js on the target machine.
 
@@ -29,8 +29,8 @@ Upgrade later with the **Update** button that appears in the dashboard's top bar
 Or from a release tarball (Releases page):
 
 ```sh
-sha256sum -c homebase-1.6.4.tar.gz.sha256
-tar xzf homebase-1.6.4.tar.gz && cd homebase-1.6.4
+sha256sum -c homebase-1.7.0.tar.gz.sha256
+tar xzf homebase-1.7.0.tar.gz && cd homebase-1.7.0
 ./install.sh --linger
 ```
 
@@ -96,6 +96,18 @@ Machine-specific settings live in `~/.config/homebase/config.json` (or `$HOMEBAS
 }
 ```
 
+Optional sections (leave them out if they don't apply):
+
+```jsonc
+{
+  "energy": {                                     // power monitoring: see Energy below
+    "tapo": {"host": "192.168.1.50", "email": "you@example.com", "password": "your-tapo-password"},
+    "tariff": "evn", "vat": 0.08, "householdKwh": 250
+  },
+  "features": {"docker": false, "gpu": true}       // force a dashboard feature off or on (normally detected)
+}
+```
+
 Restart after editing: `systemctl --user restart homebase`. `HOMEBASE_PORT`, `HOMEBASE_TAILSCALE_ORIGIN` and `HOMEBASE_TAILSCALE_LOGIN` environment variables override the file.
 
 Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `ip`, `ua`, `m`, `p`, `s` status, `b` bytes, `src` `local|tailnet|funnel`, optional 12-hex `sid` session hash — never cookies or passwords) and re-reads the control file for sign-outs and IP blocks.
@@ -119,14 +131,17 @@ Traffic is opt-in: each site writes one JSON object per request (`t` ISO time, `
 
   The installer runs in a separate systemd unit so the restart can't interrupt it; its log is `~/.local/state/homebase/update.log`, and if it fails the previous version keeps running. When the root-installed sleep scripts differ from the running version, the panel shows the `sudo` command that refreshes them.
 - **GPU:** NVIDIA (via `nvidia-smi`), AMD (`amdgpu`) and Intel integrated or Arc (`i915` / `xe`) — utilization, VRAM, temperature, power, fan and clocks where the driver exposes them, a 15-minute chart per GPU, and the processes using it. AMD/Intel readings come straight from sysfs without root; Intel utilization is the share of time the GPU was out of its idle (RC6) state, and per-process use (DRM fdinfo) covers processes of the account running Homebase. Integrated GPUs share system memory, so no VRAM is shown for them.
-- **Hosts:** machine details, sleep periods since boot, interfaces.
+- **Hosts:** machine details, sleep periods since boot, interfaces, and **Features on this machine**: which optional parts of the dashboard apply here and why. Containers, Tmux, AI services (and each agent), Traffic, Energy and GPU appear only when detected — the tool is installed, the site or plug is configured, the hardware is present. Detection looks at installation, not momentary state, so a stopped Docker daemon doesn't make the page vanish. Override with `"features": {"<id>": true|false}` (`docker`, `tmux`, `ai`, `traffic`, `energy`, `gpu`).
+- **Energy** (needs a TP-Link Tapo P110 / P110M / P115 plug the server is plugged into): live watts, energy today and this month, a 24-hour chart of 5-minute readings, and hourly, daily and monthly bars — all read from the plug's own meter over the LAN (KLAP protocol, no cloud), so they cover time the dashboard was closed and the server slept. Turn on **Third-Party Compatibility** in the Tapo app (Me → Third-Party Services) and use the Tapo account login. The email and password stay on the server; only the plug's address reaches the dashboard.
+  - **Cost:** `"tariff": "evn"` uses the built-in EVN residential 5-tier tariff (from 1 Nov 2026, before VAT; `"vat"` defaults to 8 %). Because tiered prices depend on the whole meter, the server's kWh are priced on top of `"householdKwh"` (your usual monthly use, server included) — what the bill drops by if the server were off. Use your own tiers with `"tariff": {"tiers": [[100, 1901], [null, 2289]], "vat": 0.1, "currency": "VND"}`, or a flat `"pricePerKwh"` and `"currency"`.
+  - **Estimate:** first as if the server ran 24/7 at its measured awake power; meanwhile a once-a-minute heartbeat logs when the machine is awake (`~/.local/state/homebase/energy-log.json`). After the first full day a provisional prediction from the real on-time and the plug's daily energy appears, and after 7 days it becomes the main figure.
 - **Containers:** start, stop, restart, last 80 log lines (stop/restart confirm first).
 - **Tmux sessions:** create (in their own systemd scope, so they survive Homebase restarts), preview, kill, copy attach command.
 - **AI services:** Claude Code / Codex sessions (start in tmux, stop), Ollama service and loaded models.
 - **Hosted services:** custom user units and system units with health checks, start/stop/restart, per-service "prevent sleep".
-- **Traffic:** devices, sign-ins, security alerts (failed or rate-limited sign-ins, new public devices — checked every 20 s even with no dashboard open), sign out / block IP, heatmap, Tailscale routes and devices.
-- **Sleep & power:** schedule, wake time, safeguards, last nightly result, and a **Desktop (GUI)** switch: turn the graphical desktop off (boots to text mode, frees its memory and the GPU; SSH, Tailscale, services and tmux keep running) or back on. Needs the root integration.
-- Keyboard: `Ctrl K` command palette, `1`–`9` pages, `R` refresh. Installable as an app (PWA manifest). The favicon and logo status light turn amber/red when the server needs attention.
+- **Traffic:** devices, sign-ins, security alerts (unread ones lead the page; handled ones move below the numbers) (failed or rate-limited sign-ins, new public devices — checked every 20 s even with no dashboard open), sign out / block IP, heatmap, Tailscale routes and devices.
+- **Sleep & power:** timeline, last nightly result, schedule and safeguards side by side, and a **Desktop (GUI)** switch: turn the graphical desktop off (boots to text mode, frees its memory and the GPU; SSH, Tailscale, services and tmux keep running) or back on. Needs the root integration.
+- Keyboard: `Ctrl K` command palette, `1`–`9`/`0` the first ten visible pages, `R` refresh. Installable as an app (PWA manifest). The favicon and logo status light turn amber/red when the server needs attention.
 
 ## Development
 

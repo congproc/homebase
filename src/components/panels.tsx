@@ -5,15 +5,15 @@ const pct1 = (v: number) => String(Math.round(v * 10) / 10);
 const Busy = ({on, size = 14, children}: {on: boolean; size?: number; children: React.ReactNode}) => on ? <RefreshCw size={size} className="spin" /> : <>{children}</>;
 import {
   Activity, AlertTriangle, ArrowDown, Clock, ArrowUp, ArrowUpDown, Box, Check, ChevronRight, Copy, Cpu, HardDrive, Layers,
-  Gauge, MemoryStick, Network, Play, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, WifiOff, X,
+  Gauge, MemoryStick, Network, Play, Plug, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, WifiOff, X,
 } from 'lucide-react';
 import {Table, TableHeader, TableBody, TableRow, TableHead, TableCell} from '@/components/ui/table';
 import {AreaChart, Ring, Sparkline} from './charts';
 import {ClaudeIcon, CodexIcon, OllamaIcon} from './agent-icons';
 import {toast} from 'sonner';
 import {Num} from './motion';
-import {ago, bytes, clock, diskHealth, elapsed, health, levelColor, levelFor, rate} from '../lib/format';
-import type {Container, Proc, Status} from '../lib/types';
+import {ago, bytes, clock, diskHealth, elapsed, energy, featureOn, health, levelColor, levelFor, money, rate, watts} from '../lib/format';
+import type {Agent, Container, Proc, Status} from '../lib/types';
 
 /* ---------- primitives ---------- */
 
@@ -32,8 +32,9 @@ export function Panel({title, sub, action, className = '', children}: {title: st
 export const ViewAll = ({onClick}: {onClick: () => void}) =>
   <button className="text-button" onClick={onClick}>View all <ChevronRight size={14} /></button>;
 
-export function Empty({icon: Icon, title, children}: {icon: React.ElementType; title: string; children?: React.ReactNode}) {
-  return <div className="empty"><span className="empty-icon"><Icon size={20} /></span><strong>{title}</strong>{children && <span>{children}</span>}</div>;
+/** Empty state. `compact` is a single quiet row, for panels that share a page with real content. */
+export function Empty({icon: Icon, title, children, compact}: {icon: React.ElementType; title: string; children?: React.ReactNode; compact?: boolean}) {
+  return <div className={`empty${compact ? ' compact' : ''}`}><span className="empty-icon"><Icon size={compact ? 15 : 20} /></span><div><strong>{title}</strong>{children && <span>{children}</span>}</div></div>;
 }
 
 export function Pill({on, children}: {on: boolean; children: React.ReactNode}) {
@@ -45,16 +46,17 @@ export const Skeleton = ({h = 16, w = '100%'}: {h?: number; w?: number | string}
 
 /* ---------- overview: stats ---------- */
 
-export function StatCards({d}: {d: Status | null}) {
+export function StatCards({d, go}: {d: Status | null; go?: (page: string) => void}) {
   const hist = d?.history || [];
   const times = hist.map(p => p.at);
-  const gpu = d?.gpu?.available ? d.gpu.items : [];
+  const gpu = d?.gpu?.available && featureOn(d.features, 'gpu') ? d.gpu.items : [];
+  const power = !!d?.energy?.configured && featureOn(d.features, 'energy');
   const g0 = gpu[0]; // primary: discrete first
   const gpuUtil = g0?.utilization ?? 0;
   const gpuL = levelFor(gpuUtil, 85, 97);
   const cpuL = levelFor(d?.cpu ?? 0), memL = levelFor(d?.memory.percent ?? 0, 80, 92), diskL = levelFor(d?.disk?.percent ?? 0, 80, 92);
   return (
-    <div className={`stats${gpu.length ? ' has-gpu' : ''}`}>
+    <div className={`stats${gpu.length ? ' has-gpu' : ''}${power ? ' has-power' : ''}`}>
       <div className="stat">
         <div className="stat-label"><span><Cpu size={15} />CPU</span>{d && <Ring value={d.cpu} color={levelColor[cpuL]} size={38} />}</div>
         <div className="stat-value">{d ? <><Num value={d.cpu} format={pct1} /><small>%</small></> : <Skeleton h={30} w={90} />}</div>
@@ -90,7 +92,25 @@ export function StatCards({d}: {d: Status | null}) {
           <Sparkline times={times} values={hist.map(p => p.upload)} color="var(--pink)" max={Math.max(1024, ...hist.map(p => Math.max(p.download, p.upload))) * 1.2} />
         </div>
       </div>
+      {power && d && <PowerCard d={d} go={go} />}
     </div>
+  );
+}
+
+/** Wall power of the whole server, from the smart plug it is plugged into. Opens Sleep & power for history. */
+function PowerCard({d, go}: {d: Status; go?: (page: string) => void}) {
+  const e = d.energy!, hist = d.history || [];
+  const pts = hist.filter(p => p.power != null);
+  const today = e.today ?? 0;
+  const monthly = e.monthlyCost != null ? `≈ ${money(e.monthlyCost, e.currency)}/mo${e.costBasis === 'always-on' ? ' 24/7' : ''}` : null;
+  const warn = e.available && (e.device?.overheated || (e.device?.protection.length ?? 0) > 0);
+  return (
+    <button type="button" className="stat stat-link" onClick={() => go?.('Energy')} title="Open Energy for history and cost">
+      <div className="stat-label"><span><Plug size={15} />Power</span>{!e.available ? <span className="status muted"><i />Offline</span> : warn ? <span className="status warn"><i />Check plug</span> : null}</div>
+      <div className="stat-value">{e.available && e.watts != null ? <><Num value={e.watts} format={v => watts(v).replace(' W', '')} /><small>W</small></> : '—'}</div>
+      <div className="stat-sub">{e.available ? `${energy(today)} today${monthly ? ` · ${monthly}` : ''}` : e.error || 'Plug unreachable'}</div>
+      <Sparkline times={pts.map(p => p.at)} values={pts.map(p => p.power as number)} color="var(--amber)" max={Math.max(10, ...pts.map(p => p.power as number)) * 1.3} />
+    </button>
   );
 }
 
@@ -141,6 +161,8 @@ export function HealthPanel({d, error, go}: {d: Status | null; error: string; go
   const h = health(d, error);
   const containers = d?.containers.items || [];
   const running = containers.filter(c => c.State === 'running').length;
+  const on = (f: 'docker' | 'tmux' | 'ai') => featureOn(d?.features, f);
+  const ollama = on('ai') && (!d || d.ollamaOnline || d.agents.some(a => a.name === 'ollama' && a.installed));
   const Icon = h.level === 'ok' ? Check : h.level === 'offline' ? WifiOff : h.level === 'pending' ? RefreshCw : AlertTriangle;
   return (
     <Panel title="System health" className="system-panel" action={<Activity size={16} className="dim" />}>
@@ -152,15 +174,15 @@ export function HealthPanel({d, error, go}: {d: Status | null; error: string; go
         </div>
       </div>
       <div className="health-row"><span>Load average <em>1 / 5 / 15m</em></span><strong className="mono">{d?.load.map(v => v.toFixed(2)).join(' / ') || '—'}</strong></div>
-      <button className="health-row link" onClick={() => go('Containers')}><span>Running containers</span><strong>{running} <span className="dim">/ {containers.length}</span></strong></button>
-      <button className="health-row link" onClick={() => go('Tmux sessions')}><span>Tmux sessions</span><strong>{d?.sessions.items.length ?? '—'}</strong></button>
+      {on('docker') && <button className="health-row link" onClick={() => go('Containers')}><span>Running containers</span><strong>{running} <span className="dim">/ {containers.length}</span></strong></button>}
+      {on('tmux') && <button className="health-row link" onClick={() => go('Tmux sessions')}><span>Tmux sessions</span><strong>{d?.sessions.items.length ?? '—'}</strong></button>}
       {!!d?.disks?.items.length && (() => {
         const levels = d.disks.items.map(x => diskHealth(x).level), bad = levels.filter(l => l !== 'ok').length;
         const hottest = Math.max(...d.disks.items.map(x => x.temperature ?? -Infinity));
         return <button className="health-row link" onClick={() => go('Storage')}><span>Drives</span>
           <span className={bad ? (levels.includes('critical') ? 'red' : 'amber') : 'lime'}>{bad ? `${bad} need${bad === 1 ? 's' : ''} attention` : `${d.disks.items.length} healthy`}{Number.isFinite(hottest) ? <span className="dim"> · {Math.round(hottest)}°C</span> : null}</span></button>;
       })()}
-      <button className="health-row link" onClick={() => go('AI services')}><span>Ollama API</span><span className={d?.ollamaOnline ? 'lime' : 'dim'}>{d?.ollamaOnline ? `Connected · ${d.models.length} loaded` : 'Unavailable'}</span></button>
+      {ollama && <button className="health-row link" onClick={() => go('AI services')}><span>Ollama API</span><span className={d?.ollamaOnline ? 'lime' : 'dim'}>{d?.ollamaOnline ? `Connected · ${d.models.length} loaded` : 'Unavailable'}</span></button>}
     </Panel>
   );
 }
@@ -179,7 +201,7 @@ export function ContainersPanel({d, busy, pending, onAction, onConfirm, full, go
     <Panel title="Containers" sub={`${running} running · ${all.length - running} stopped`}
       action={full ? all.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Filter containers" /> : go && <ViewAll onClick={go} />}>
       {!all.length
-        ? <Empty icon={Box} title={!d ? 'Connecting…' : d.containers.available ? 'No containers yet' : 'Docker unavailable'}>
+        ? <Empty compact={!full} icon={Box} title={!d ? 'Connecting…' : d.containers.available ? 'No containers yet' : 'Docker unavailable'}>
             {d?.containers.available ? 'Containers on this host will appear here.' : d?.containers.error || 'Waiting for the local agent…'}
           </Empty>
         : !items.length ? <Empty icon={Search} title="No matches">Nothing matches “{q}”.</Empty>
@@ -225,7 +247,7 @@ export function TmuxPanel({d, now, busy, pending, onOpen, onCreate, onKill, go}:
     <Panel title="Tmux sessions" sub={`${sessions.length} persistent ${sessions.length === 1 ? 'workspace' : 'workspaces'}`} action={go && <ViewAll onClick={go} />}>
       <div className="session-list">
         {!sessions.length
-          ? <Empty icon={Terminal} title="No active sessions">Create a workspace that keeps running after you disconnect.</Empty>
+          ? <Empty compact={!!go} icon={Terminal} title="No active sessions">Create a workspace that keeps running after you disconnect.</Empty>
           : sessions.map(s => (
             <div className="session" key={s.name}>
               <button className="session-open" onClick={() => onOpen(s.name)} disabled={busy} aria-label={`Preview ${s.name}`}>
@@ -256,10 +278,14 @@ const AGENT_META: Record<string, {title: string; cls: string; icon: React.ReactN
 export type AgentAction = (name: string, action: 'start' | 'stop' | 'restart', pid?: number) => void;
 
 export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null; detailed?: boolean; busy: boolean; pending?: string | null; onAgent: AgentAction}) {
-  const agents = d?.agents || [{name: 'claude'}, {name: 'codex'}, {name: 'ollama'}];
+  const all: Agent[] = d?.agents || [{name: 'claude'}, {name: 'codex'}, {name: 'ollama'}];
+  // Agents that aren't installed are left out; the full page lists them, folded away, with install commands.
+  const isMissing = (a: Agent) => !!d && a.installed === false && !a.processes?.length && !(a.name === 'ollama' && d.ollamaOnline);
+  const agents = all.filter(a => !isMissing(a)), absent = all.filter(isMissing);
+  const tmux = featureOn(d?.features, 'tmux');
   return (
     <Panel title="AI services" sub="Coding agents and local models on this host">
-      <div className="agents">{agents.map(a => {
+      <div className={`agents count-${agents.length}`}>{agents.map(a => {
         const meta = AGENT_META[a.name] || {title: a.name, cls: '', icon: <Layers size={20} />, tagline: '', install: ''};
         const procs = a.processes || [];
         const live = procs.length > 0 || (a.name === 'ollama' && !!d?.ollamaOnline);
@@ -297,7 +323,7 @@ export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null
                     </>
                   : <button className="button small primary" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={pending === `agent:${a.name}:start`} size={13}><Power size={13} /></Busy> Start service</button>)
                 : <>
-                    <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={pending === `agent:${a.name}:start`} size={13}><Play size={13} /></Busy> {procs.length ? 'New session' : 'Start in tmux'}</button>
+                    {tmux && <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={pending === `agent:${a.name}:start`} size={13}><Play size={13} /></Busy> {procs.length ? 'New session' : 'Start in tmux'}</button>}
                     {procs.length > 0 && <button className="button small danger-outline" disabled={busy} onClick={() => onAgent(a.name, 'stop')}><Busy on={pending === `agent:${a.name}:stop`} size={13}><Power size={13} /></Busy> Stop all</button>}
                   </>}
               </div>
@@ -314,6 +340,13 @@ export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null
           </div>
         );
       })}</div>
+      {detailed && absent.length > 0 && <details className="agents-absent">
+        <summary>Not installed on this machine: {absent.map(a => AGENT_META[a.name]?.title || a.name).join(', ')}</summary>
+        {absent.map(a => AGENT_META[a.name]?.install && <div className="setup-command" key={a.name}>
+          <span className="control-hint">{AGENT_META[a.name].title}</span><code>{AGENT_META[a.name].install}</code>
+          <button className="button small" aria-label={`Copy ${AGENT_META[a.name].title} install command`} title="Copy" onClick={() => navigator.clipboard.writeText(AGENT_META[a.name].install).then(() => toast.success('Install command copied')).catch(() => toast.error('Copy the command manually'))}><Copy size={13} /></button>
+        </div>)}
+      </details>}
     </Panel>
   );
 }
@@ -321,7 +354,7 @@ export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null
 const VENDOR_LABEL = {nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel'} as const;
 
 export function GpuPanel({d}: {d: Status | null}) {
-  if (!d?.gpu?.available) return null;
+  if (!d?.gpu?.available || !featureOn(d.features, 'gpu')) return null;
   return <>{d.gpu.items.map(g => {
     const hist = g.history || [], times = hist.map(p => p.at);
     const metrics: [string, string, string?][] = [
@@ -374,7 +407,7 @@ export function ModelsPanel({d}: {d: Status | null}) {
               <div className="model-meta"><span>{bytes(m.size)}</span><div className="meter small"><span style={{width: `${vram}%`, background: 'var(--violet)'}} /></div><span>{vram}% GPU</span></div>
             </div>;
           })}</div>
-        : <Empty icon={Layers} title="No models loaded">Models appear here while Ollama keeps them in memory for inference.</Empty>}
+        : <Empty compact icon={Layers} title="No models loaded">Models appear here while Ollama keeps them in memory for inference.</Empty>}
     </Panel>
   );
 }

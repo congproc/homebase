@@ -63,7 +63,7 @@ function SmartDetails({d}: {d: Disk}) {
   return <div className="drive-section">
     <h4>SMART health</h4>
     {!!s.warnings?.length && <div className="gpu-note drive-warn"><AlertTriangle size={14} />{s.warnings.join(' · ')}</div>}
-    <dl className="detail-list compact">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+    <dl className="detail-list compact smart-grid">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
   </div>;
 }
 

@@ -1,4 +1,4 @@
-import type {Disk, Level, Status} from './types';
+import type {Disk, FeatureId, Features, Level, Status} from './types';
 
 export const bytes = (v = 0) =>
   v >= 1024 ** 4 ? (v / 1024 ** 4).toFixed(2) + ' TB'
@@ -69,6 +69,8 @@ export function health(d: Status | null, error: string): {level: Level; title: s
     if (dh.level === 'critical') level = 'critical'; else if (dh.level === 'warn' && level === 'ok') level = 'warn';
     reasons.push(...dh.reasons);
   }
+  const plug = d.energy?.available ? d.energy.device : null;
+  if (plug?.overheated || plug?.protection.length) { if (level === 'ok') level = 'warn'; reasons.push(plug.overheated ? 'Smart plug is overheating' : `Smart plug protection: ${plug.protection.join(', ').replace(/_/g, ' ')}`); }
   if (d.load[0] > d.cores) { if (level === 'ok') level = 'warn'; reasons.push(`Load ${d.load[0].toFixed(2)} exceeds ${d.cores} cores`); }
   const title = level === 'critical' ? 'Under heavy pressure' : level === 'warn' ? 'Needs attention' : 'All systems normal';
   return {level, title, reasons};
@@ -77,3 +79,25 @@ export function health(d: Status | null, error: string): {level: Level; title: s
 export const levelColor: Record<Level, string> = {
   ok: 'var(--lime)', warn: 'var(--amber)', critical: 'var(--red)', offline: 'var(--red)', pending: 'var(--text-3)',
 };
+
+/** Power in watts: one decimal below 100 W. */
+export const watts = (v = 0) => v >= 100 ? `${Math.round(v)} W` : `${(Math.round(v * 10) / 10).toFixed(1)} W`;
+
+/** Energy from Wh: Wh below 1 kWh, then kWh. */
+export const energy = (wh = 0) => wh >= 1000 ? `${(wh / 1000).toFixed(wh >= 100000 ? 0 : 2)} kWh` : `${Math.round(wh)} Wh`;
+
+/** Cost of `wh` at an effective price per kWh; currency is an ISO code (VND, USD) or any short label. */
+export function cost(wh: number, pricePerKwh?: number | null, currency = '') {
+  if (!pricePerKwh) return null;
+  return money((wh / 1000) * pricePerKwh, currency);
+}
+
+/** Money in the tariff's currency; whole units for VND (and above 100 of anything). */
+export function money(v: number, currency = '') {
+  const whole = currency === 'VND' || v >= 100;
+  try { if (/^[A-Z]{3}$/.test(currency)) return new Intl.NumberFormat(undefined, {style: 'currency', currency, maximumFractionDigits: whole ? 0 : 2}).format(v); } catch { /* unknown code */ }
+  return `${whole ? Math.round(v).toLocaleString() : v.toFixed(2)}${currency ? ' ' + currency : ''}`;
+}
+
+/** True unless the feature is known to be off on this machine (unknown while connecting counts as on). */
+export const featureOn = (features: Features | null | undefined, id: FeatureId) => features?.[id]?.on ?? true;

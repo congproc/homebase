@@ -6,6 +6,8 @@ import {checkAlerts,getAlerts,unreadAlerts,updateAlerts} from './alerts.mjs';
 import {readGpus} from './gpu.mjs';
 import {readDisks} from './disks.mjs';
 import {getDesktop,desktopAction} from './desktop.mjs';
+import {getEnergy,readEnergy,startEnergyLog} from './energy.mjs';
+import {detectFeatures,resolveFeatures} from './features.mjs';
 import {VERSION,applyUpdate,checkForUpdate,startUpdateChecks,updateAvailable,updateStatus} from './update.mjs';
 import {tmuxNew,tmuxKill,serviceAction,startAgent,stopAgent,SESSION_NAME} from './actions.mjs';
 import http from 'node:http';
@@ -18,6 +20,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 const exec = promisify(execFile);
 const token = randomBytes(32).toString('hex');
 const run = async (bin,args=[]) => { try { const {stdout}=await exec(bin,args,{timeout:6000,maxBuffer:2*1024*1024}); return {ok:true,output:stdout.trim()}; } catch(e) {return {ok:false,output:'',error:e.code==='ENOENT'?'Not installed':e.stderr?.trim() || e.message};} };
+// Optional tools: the first three are the AI agents, in display order.
+const TOOLS=['claude','codex','ollama','docker','tmux'];
 let previous=os.cpus(), history=[], snapshot, collecting=false;
 const events=[];
 // Sleep periods since boot from kernel log (cached 60s). Totals come from clocks: BOOTTIME includes suspend, MONOTONIC excludes it.
@@ -31,13 +35,23 @@ async function sleepPeriods(){
 }
 const record=(message)=>{events.unshift({message,at:Date.now()});events.splice(30);};
 record('Local monitoring started');
+// Interpreters and runtimes all look alike in `ps` (node shows as "MainThread"); name them by the script they run.
+const GENERIC=new Set(['MainThread','node','python','python3','bun','deno','java','ruby','perl']);
+const base=p=>p.split('/').pop();
+async function describe(proc){
+ if(!GENERIC.has(proc.name))return proc;
+ const argv=(await readFile(`/proc/${proc.pid}/cmdline`,'utf8').catch(()=>'')).split('\0').filter(Boolean);
+ if(!argv.length)return proc;
+ const script=argv.slice(1).find(a=>!a.startsWith('-'));
+ return {...proc,name:`${base(argv[0])}${script?' '+base(script):''}`.slice(0,48)};
+}
 async function collect(){
  if(collecting)return;collecting=true;
  try{
  const now=os.cpus();let idle=0,total=0;now.forEach((c,i)=>{let p=previous[i]||c;idle+=c.times.idle-p.times.idle;for(const k in c.times)total+=c.times[k]-p.times[k];});previous=now;
  const cpu=total?Math.round((1-idle/total)*1000)/10:0;
- const [docker,tmux,ps,df,models,net,mem,installed,gpu,disks]=await Promise.all([
- run('docker',['ps','-a','--format','{{json .}}']),run('tmux',['list-sessions','-F','#{session_windows}|#{session_attached}|#{session_created}|#{session_name}']),run('ps',['-eo','pid,pcpu,pmem,etimes,comm','--sort=-pcpu']),run('df',['-B1','/']),fetch('http://127.0.0.1:11434/api/ps',{signal:AbortSignal.timeout(2500)}).then(r=>r.ok?r.json():Promise.reject()).catch(()=>null),readFile('/proc/net/dev','utf8').catch(()=>''),readFile('/proc/meminfo','utf8').catch(()=>''),Promise.all(['claude','codex','ollama'].map(n=>run('which',[n]))),readGpus(),readDisks().catch(e=>({available:false,error:e.message,items:[]}))
+ const [docker,tmux,ps,df,models,net,mem,installed,gpu,disks,energy]=await Promise.all([
+ run('docker',['ps','-a','--format','{{json .}}']),run('tmux',['list-sessions','-F','#{session_windows}|#{session_attached}|#{session_created}|#{session_name}']),run('ps',['-eo','pid,pcpu,pmem,etimes,comm','--sort=-pcpu']),run('df',['-B1','/']),fetch('http://127.0.0.1:11434/api/ps',{signal:AbortSignal.timeout(2500)}).then(r=>r.ok?r.json():Promise.reject()).catch(()=>null),readFile('/proc/net/dev','utf8').catch(()=>''),readFile('/proc/meminfo','utf8').catch(()=>''),Promise.all(TOOLS.map(n=>run('which',[n]))),readGpus(),readDisks().catch(e=>({available:false,error:e.message,items:[]})),readEnergy()
  ]);
  // comm goes last: names can contain spaces ("tmux: server"), which used to shift the numeric columns into NaN.
  const processes=ps.output.split('\n').slice(1).map(s=>{const [pid,cpu,memory,elapsed,...name]=s.trim().split(/\s+/);return {pid:Number(pid),name:name.join(' '),cpu:Number(cpu)||0,memory:Number(memory)||0,elapsed:Number(elapsed)||0};}).filter(p=>Number.isInteger(p.pid)&&p.name);
@@ -47,17 +61,18 @@ async function collect(){
  const network=net.split('\n').slice(2).filter(l=>!l.trim().startsWith('lo:')).reduce((a,l)=>{const v=l.split(':')[1]?.trim().split(/\s+/);if(v){a.rx+=Number(v[0]);a.tx+=Number(v[8]);}return a;},{rx:0,tx:0});
  const t=Date.now();
  // After a gap (idle pause, suspend) there is no fair baseline for rates; the chart draws the gap as a break.
- const last=history.at(-1),old=last&&t-last.at<=30000?last:undefined;const point={at:t,cpu,memory:memory.percent,rx:network.rx,tx:network.tx,download:old?Math.max(0,(network.rx-old.rx)/((t-old.at)/1000)):0,upload:old?Math.max(0,(network.tx-old.tx)/((t-old.at)/1000)):0,...(gpu.items[0]?{gpu:gpu.items[0].utilization,vram:gpu.items[0].memory?.percent??null}:{})};history.push(point);history=history.filter(p=>t-p.at<=15*60*1000).slice(-180);
+ const last=history.at(-1),old=last&&t-last.at<=30000?last:undefined;const point={at:t,cpu,memory:memory.percent,rx:network.rx,tx:network.tx,download:old?Math.max(0,(network.rx-old.rx)/((t-old.at)/1000)):0,upload:old?Math.max(0,(network.tx-old.tx)/((t-old.at)/1000)):0,...(gpu.items[0]?{gpu:gpu.items[0].utilization,vram:gpu.items[0].memory?.percent??null}:{}),...(energy.configured?{power:energy.available?energy.watts:null}:{})};history.push(point);history=history.filter(p=>t-p.at<=15*60*1000).slice(-180);
  const boottime=os.uptime(),monotonic=Number(process.hrtime.bigint())/1e9,periods=await sleepPeriods().catch(()=>[]);
  const sleep={awake:monotonic,asleep:Math.max(0,boottime-monotonic),bootAt:t-boottime*1000,count:periods.length,periods:periods.slice(-14)};
- snapshot={at:t,sleep,hostname:os.hostname(),user:os.userInfo().username,platform:`${os.type()} ${os.release()}`,cpuModel:now[0]?.model,cores:now.length,cpu,memory,disk,uptime:os.uptime(),load:os.loadavg(),network:point,history,interfaces:Object.entries(os.networkInterfaces()).flatMap(([name,list])=>(list||[]).filter(a=>!a.internal&&a.family==='IPv4').map(a=>({name,address:a.address}))),containers:{available:docker.ok,error:docker.error,items:docker.output?docker.output.split('\n').map(l=>JSON.parse(l)):[]},sessions:{available:tmux.ok||tmux.error?.includes('no server running')||tmux.error?.includes('No such file'),error:tmux.error,items:tmux.output?tmux.output.split('\n').map(l=>{const [windows,attached,created,...rest]=l.split('|');return {name:rest.join('|'),windows:Number(windows),attached:Number(attached),created:Number(created)}}).filter(s=>s.name):[]},agents:['claude','codex','ollama'].map((name,i)=>({name,installed:installed[i].ok,processes:processes.filter(p=>p.name.toLowerCase().includes(name))})),models:models?.models||[],ollamaOnline:!!models,processes:processes.slice(0,12),gpu,disks:{...disks,setupCommand:config.setupCommand},events};
+ snapshot={at:t,sleep,hostname:os.hostname(),user:os.userInfo().username,platform:`${os.type()} ${os.release()}`,cpuModel:now[0]?.model,cores:now.length,cpu,memory,disk,uptime:os.uptime(),load:os.loadavg(),network:point,history,interfaces:Object.entries(os.networkInterfaces()).flatMap(([name,list])=>(list||[]).filter(a=>!a.internal&&a.family==='IPv4').map(a=>({name,address:a.address}))),containers:{available:docker.ok,error:docker.error,items:docker.output?docker.output.split('\n').map(l=>JSON.parse(l)):[]},sessions:{available:tmux.ok||tmux.error?.includes('no server running')||tmux.error?.includes('No such file'),error:tmux.error,items:tmux.output?tmux.output.split('\n').map(l=>{const [windows,attached,created,...rest]=l.split('|');return {name:rest.join('|'),windows:Number(windows),attached:Number(attached),created:Number(created)}}).filter(s=>s.name):[]},agents:['claude','codex','ollama'].map((name,i)=>({name,installed:installed[i].ok,processes:processes.filter(p=>p.name.toLowerCase().includes(name))})),models:models?.models||[],ollamaOnline:!!models,processes:await Promise.all(processes.slice(0,12).map(describe)),gpu,disks:{...disks,setupCommand:config.setupCommand},energy,events};
+ snapshot.features=resolveFeatures(detectFeatures({which:Object.fromEntries(TOOLS.map((n,i)=>[n,installed[i].ok])),containers:snapshot.containers,ollamaOnline:!!models,gpu,sites:config.traffic.sites.length,plugHost:config.energy.tapo?.host}),config.features);
  }finally{collecting=false;}
 }
 // Security alerts are checked in the background even when no dashboard is open (cheap: incremental log reads).
 await checkAlerts();setInterval(()=>{checkAlerts();},20000).unref();
 // Idle pause: only collect while a dashboard has asked for status recently. Hidden tabs stop polling, so they count as idle.
 const IDLE_AFTER=20000;let lastViewed=0;
-startUpdateChecks();
+startUpdateChecks();startEnergyLog();
 await collect();setInterval(()=>{
  if(Date.now()-lastViewed>IDLE_AFTER)return;
  collect().catch(()=>{});
@@ -79,6 +94,7 @@ const server=http.createServer(async(req,res)=>{
  await markViewed();
 
  if(req.method==='GET'&&url.pathname==='/api/power')return send(res,200,await getPowerState());
+ if(req.method==='GET'&&url.pathname==='/api/energy')return send(res,200,await getEnergy());
  if(req.method==='GET'&&url.pathname==='/api/desktop')return send(res,200,await getDesktop());
  if(req.method==='GET'&&url.pathname==='/api/alerts'){await checkAlerts();return send(res,200,await getAlerts());}
  if(req.method==='GET'&&url.pathname==='/api/traffic')return send(res,200,await getTraffic(url.searchParams.get('site')||undefined,url.searchParams.get('range')||undefined));

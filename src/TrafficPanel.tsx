@@ -138,7 +138,7 @@ export default function TrafficPanel({token}: {token?: string}) {
 
   const ctl = data?.control;
   const hasControls = !!ctl && (ctl.blocked.length > 0 || ctl.revoked.length > 0 || !!ctl.revokedBefore || !!ctl.error);
-  const shownAlerts = alerts ? (allAlerts ? alerts.alerts : alerts.alerts.slice(0, 5)) : [];
+  const shownAlerts = alerts ? (allAlerts ? alerts.alerts : alerts.alerts.slice(0, alerts.unread > 0 ? 5 : 2)) : [];
 
   if (unconfigured) return (
     <Panel title="No sites configured" sub="Traffic reads the access logs that your own web apps write">
@@ -148,19 +148,9 @@ export default function TrafficPanel({token}: {token?: string}) {
     </Panel>
   );
 
-  return <>
-    <div className="tr-toolbar">
-      {data && data.sites.length > 1 && <div className="segmented" role="tablist" aria-label="Site">
-        {data.sites.map(s => <button key={s.id} role="tab" aria-selected={(site || data.site.id) === s.id} className={(site || data.site.id) === s.id ? 'selected' : ''} onClick={() => setSite(s.id)}>{s.name}</button>)}
-      </div>}
-      <div className="segmented" role="tablist" aria-label="Time range">
-        {RANGES.map(([id, label]) => <button key={id} role="tab" aria-selected={range === id} title={label} className={range === id ? 'selected' : ''} onClick={() => setRange(id)}>{id}</button>)}
-      </div>
-      {t && <span className="tr-live"><span className={`tr-dot ${t.onlineNow ? 'on' : ''}`} />{t.onlineNow} active now</span>}
-    </div>
-    {error && <div className="tr-note warn">{error}</div>}
-    {d?.loggingSince && d.loggingSince > d.since && <div className="tr-note">Detailed logging started {stamp(d.loggingSince)}; nothing earlier is available.</div>}
-
+  // Unread alerts lead the page; once handled they move below the numbers so stale ones don't push everything down.
+  const unread = alerts?.unread ?? 0;
+  const alertsPanel = (
     <Panel title="Security alerts" className="tr-alerts"
       sub={alerts?.learning ? 'Learning your current devices…' : 'Failed sign-ins, and new devices signing in from the public internet. Checked every 20 s, even while Homebase is closed.'}
       action={!!alerts?.alerts.length && <div className="tr-actions">
@@ -186,9 +176,25 @@ export default function TrafficPanel({token}: {token?: string}) {
               </div>
             </div>;
           })}
-          {alerts.alerts.length > 5 && <button className="button small tr-more" onClick={() => setAllAlerts(v => !v)}>{allAlerts ? 'Show fewer' : `Show all ${alerts.alerts.length}`}</button>}
+          {alerts.alerts.length > shownAlerts.length || allAlerts ? <button className="button small tr-more" onClick={() => setAllAlerts(v => !v)}>{allAlerts ? 'Show fewer' : `Show all ${alerts.alerts.length}`}</button> : null}
         </div>}
     </Panel>
+  );
+
+  return <>
+    <div className="tr-toolbar">
+      {data && data.sites.length > 1 && <div className="segmented" role="tablist" aria-label="Site">
+        {data.sites.map(s => <button key={s.id} role="tab" aria-selected={(site || data.site.id) === s.id} className={(site || data.site.id) === s.id ? 'selected' : ''} onClick={() => setSite(s.id)}>{s.name}</button>)}
+      </div>}
+      <div className="segmented" role="tablist" aria-label="Time range">
+        {RANGES.map(([id, label]) => <button key={id} role="tab" aria-selected={range === id} title={label} className={range === id ? 'selected' : ''} onClick={() => setRange(id)}>{id}</button>)}
+      </div>
+      {t && <span className="tr-live"><span className={`tr-dot ${t.onlineNow ? 'on' : ''}`} />{t.onlineNow} active now</span>}
+    </div>
+    {error && <div className="tr-note warn">{error}</div>}
+    {d?.loggingSince && d.loggingSince > d.since && <div className="tr-note">Detailed logging started {stamp(d.loggingSince)}; nothing earlier is available.</div>}
+
+    {unread > 0 && alertsPanel}
 
     <div className="stats tr-stats">
       {[
@@ -266,6 +272,8 @@ export default function TrafficPanel({token}: {token?: string}) {
         })}
       </div>
     </Panel>}
+
+    {unread === 0 && alertsPanel}
 
     <div className="services-grid">
       <Panel title="Recent activity" sub="Latest page loads, sign-ins and actions (background updates hidden)">

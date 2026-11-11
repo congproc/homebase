@@ -5,6 +5,8 @@ import {readFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {parseTariff} from './tariff.mjs';
+import {parseOverrides} from './features.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const home = os.homedir();
@@ -44,6 +46,19 @@ const sites = (Array.isArray(file.traffic?.sites) ? file.traffic.sites : [])
   .filter(s => s && SITE_ID.test(s.id) && PREFIX.test(s.prefix || ''))
   .map(s => ({id: s.id, name: String(s.name || s.id), unit: s.unit, port: Number(s.port) || null, prefix: s.prefix}));
 
+// Optional Tapo smart plug (P110/P110M/P115) that the server is plugged into, read over the LAN for power use.
+// The email and password stay on the server: only the host is ever sent to the dashboard.
+const tapo = file.energy?.tapo;
+const energy = {
+  tapo: tapo && typeof tapo.host === 'string' && /^[A-Za-z0-9.-]{1,253}$/.test(tapo.host) && typeof tapo.email === 'string' && typeof tapo.password === 'string' && tapo.email && tapo.password
+    ? {host: tapo.host, email: tapo.email, password: tapo.password} : null,
+  // "tariff": "evn" (built-in EVN residential tiers) or a custom {tiers, vat, currency}; "pricePerKwh" alone gives a flat price.
+  tariff: parseTariff(file.energy?.tariff, {pricePerKwh: Number(file.energy?.pricePerKwh) || 0, currency: typeof file.energy?.currency === 'string' ? file.energy.currency : '', vat: file.energy?.vat}),
+  /** Whole household's usual monthly kWh (server included): the server's kWh are priced at the top of it. */
+  householdKwh: Number(file.energy?.householdKwh) > 0 ? Number(file.energy.householdKwh) : 0,
+};
+if (file.energy?.tapo && !energy.tapo) console.error('Homebase: ignoring energy.tapo in config — it needs "host", "email" and "password"');
+
 export const config = Object.freeze({
   port,
   configPath: CONFIG_PATH.startsWith(home + '/') ? '~' + CONFIG_PATH.slice(home.length) : CONFIG_PATH,
@@ -61,6 +76,9 @@ export const config = Object.freeze({
   },
   /** In-app updates: check GitHub for a newer release (no data is sent besides the request itself). */
   updates: {check: file.updates?.check !== false},
+  energy,
+  /** Force optional dashboard features on or off: {"docker": false, "traffic": true, ...}. */
+  features: parseOverrides(file.features),
   powerHelper: '/usr/local/sbin/homebase-power',
   setupCommand: `sudo python3 ${path.join(ROOT, 'system', 'install-power.py')} --user ${os.userInfo().username}`,
 });

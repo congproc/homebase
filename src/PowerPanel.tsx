@@ -175,7 +175,7 @@ export default function PowerPanel({mode, token}: {mode: 'services' | 'settings'
               <article className={`hosted-service ${up ? 'up' : 'down'}`} key={s.id}>
                 <div className="hosted-title">
                   <span className="hosted-icon"><Globe size={19} /></span>
-                  <div><h3>{s.name}</h3>{s.description && s.description !== s.unit && s.description !== s.name && <p>{s.description}</p>}</div>
+                  <div><h3 title={s.name}>{s.name}</h3>{s.description && s.description !== s.unit && s.description !== s.name && <p>{s.description}</p>}</div>
                   {s.job && !up
                     ? <span className={`status ${s.job.result && s.job.result !== 'success' ? 'failed' : 'muted'}`}><i />{s.job.result && s.job.result !== 'success' ? 'Last run failed' : 'Scheduled job'}</span>
                     : <Pill on={up}>{up ? (s.job ? 'Running now' : s.subState || 'active') : s.state}</Pill>}
@@ -233,6 +233,15 @@ export default function PowerPanel({mode, token}: {mode: 'services' | 'settings'
           <div className="schedule-foot"><span><Clock size={13} /> Next attempt: {power.nextAttempt || 'Not scheduled'}</span><span>{power.timezone}</span></div>
         </div>
 
+        <Panel title="Last nightly check" sub={power.lastAttempt || 'No previous attempt recorded'} action={<Pill on={/resum|suspend/i.test(power.lastOutcome)}>{power.lastOutcome}</Pill>}>
+          <div className="sleep-history">
+            {power.lastReasons.length
+              ? <ul>{power.lastReasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+              : <p>No blocking reasons recorded in the latest check.</p>}
+            <div><Clock size={14} /><span>Next attempt: {power.nextAttempt || 'Not scheduled'} · Timer {power.timerState}</span></div>
+          </div>
+        </Panel>
+
         <form onSubmit={e => { e.preventDefault(); save(draft); }} className="power-form">
           <Panel title="Nightly schedule" sub="Uses your existing system timer and RTC wake alarm.">
             <div className="setting-row">
@@ -272,15 +281,6 @@ export default function PowerPanel({mode, token}: {mode: 'services' | 'settings'
         </form>
 
         <DesktopPanel token={token} />
-
-        <Panel title="Last nightly check" sub={power.lastAttempt || 'No previous attempt recorded'} action={<Pill on={/resum|suspend/i.test(power.lastOutcome)}>{power.lastOutcome}</Pill>}>
-          <div className="sleep-history">
-            {power.lastReasons.length
-              ? <ul>{power.lastReasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
-              : <p>No blocking reasons recorded in the latest check.</p>}
-            <div><Clock size={14} /><span>Next attempt: {power.nextAttempt || 'Not scheduled'} · Timer {power.timerState}</span></div>
-          </div>
-        </Panel>
       </>}
     </div>
   );

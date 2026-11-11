@@ -1,7 +1,7 @@
 'use client';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Menu, Moon, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
+  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Menu, Moon, Plug, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
 } from 'lucide-react';
 import {SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, useSidebar} from '@/components/ui/sidebar';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from '@/components/ui/dialog';
@@ -9,14 +9,16 @@ import {Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandI
 import {Toaster, toast} from 'sonner';
 import {ConfirmProvider, useConfirm} from '../src/components/confirm';
 import PowerPanel from '../src/PowerPanel';
+import EnergyPanel from '../src/EnergyPanel';
+import FeaturesPanel from '../src/FeaturesPanel';
 import TrafficPanel from '../src/TrafficPanel';
 import UpdatePanel from '../src/UpdatePanel';
 import StoragePanel from '../src/StoragePanel';
 import {registerMonitoringTool} from '../src/webmcp';
 import {LogoMark, useStatusFavicon} from '../src/components/logo';
 import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, StatCards, TmuxPanel} from '../src/components/panels';
-import {ago, clock, elapsed, health} from '../src/lib/format';
-import type {Status} from '../src/lib/types';
+import {ago, clock, elapsed, featureOn, health} from '../src/lib/format';
+import type {FeatureId, Features, Status} from '../src/lib/types';
 
 // Grouped by what you are doing: watching the machine, managing what runs on it, configuring it.
 // The 1–9/0 shortcuts follow this order.
@@ -24,6 +26,7 @@ const NAV = [
   {name: 'Overview', slug: 'overview', icon: LayoutDashboard, group: 'Monitor', blurb: 'A little clarity for everything you’re running.'},
   {name: 'Resources', slug: 'resources', icon: Activity, group: 'Monitor', blurb: 'Live resource usage and the processes behind it.'},
   {name: 'Storage', slug: 'storage', icon: HardDrive, group: 'Monitor', blurb: 'Drives, filesystems, temperatures and SMART health.'},
+  {name: 'Energy', slug: 'energy', icon: Plug, group: 'Monitor', blurb: 'What the server draws from the wall, and what that costs.'},
   {name: 'Traffic', slug: 'traffic', icon: BarChart3, group: 'Monitor', blurb: 'Who is using your hosted sites, from which devices, and when.'},
   {name: 'Containers', slug: 'containers', icon: Box, group: 'Workloads', blurb: 'Keep your services running smoothly.'},
   {name: 'Tmux sessions', slug: 'tmux', icon: Terminal, group: 'Workloads', blurb: 'Persistent terminals, always within reach.'},
@@ -36,6 +39,11 @@ const GROUPS = ['Monitor', 'Workloads', 'System'] as const;
 /** Pages on the phone tab bar; everything else lives behind "More". */
 const TABS: {name: PageName; label: string}[] = [{name: 'Overview', label: 'Overview'}, {name: 'Resources', label: 'Resources'}, {name: 'Storage', label: 'Storage'}, {name: 'AI services', label: 'AI'}];
 type PageName = typeof NAV[number]['name'];
+type NavItem = typeof NAV[number];
+/** Pages that only make sense when a feature is present on this machine. */
+const PAGE_FEATURE: Partial<Record<PageName, FeatureId>> = {Containers: 'docker', 'Tmux sessions': 'tmux', 'AI services': 'ai', Traffic: 'traffic', Energy: 'energy'};
+const FEATURES_KEY = 'homebase.features';
+const cachedFeatures = (): Features | null => { try { return JSON.parse(localStorage.getItem(FEATURES_KEY) || 'null'); } catch { return null; } };
 const fromHash = (): PageName => NAV.find(n => n.slug === window.location.hash.replace(/^#\/?/, ''))?.name ?? 'Overview';
 
 type Output = {title: string; body: string; session?: string; container?: string};
@@ -134,14 +142,24 @@ function Home() {
   };
 
   // Keyboard: ⌘K / Ctrl+K palette, 1–9 and 0 jump to page, R refresh.
-  const keyRef = useRef({setPage, manualRefresh});
-  useEffect(() => { keyRef.current = {setPage, manualRefresh}; });
+  // Optional features: the last known set is remembered so pages don't flash in and out while connecting.
+  const [savedFeatures] = useState(cachedFeatures);
+  const features = d?.features ?? savedFeatures;
+  const featureKey = d?.features ? JSON.stringify(d.features) : '';
+  useEffect(() => { if (featureKey) try { localStorage.setItem(FEATURES_KEY, featureKey); } catch { /* private mode */ } }, [featureKey]);
+  const has = useCallback((f: FeatureId) => featureOn(features, f), [features]);
+  const pages: NavItem[] = NAV.filter(n => { const f = PAGE_FEATURE[n.name]; return !f || has(f); });
+  // A bookmarked page for a feature this machine doesn't have falls back to the overview.
+  useEffect(() => { const f = PAGE_FEATURE[page]; if (d?.features && f && !d.features[f].on) setPage('Overview'); }, [d?.features, page, setPage]);
+
+  const keyRef = useRef({setPage, manualRefresh, pages});
+  useEffect(() => { keyRef.current = {setPage, manualRefresh, pages}; });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p); return; }
       const t = e.target as HTMLElement;
       if (e.metaKey || e.ctrlKey || e.altKey || t.closest('input,textarea,select,[contenteditable=true],[role=dialog]')) return;
-      if (/^[0-9]$/.test(e.key)) { const item = NAV[(Number(e.key) + 9) % 10]; if (item) keyRef.current.setPage(item.name); }
+      if (/^[0-9]$/.test(e.key)) { const item = keyRef.current.pages[(Number(e.key) + 9) % 10]; if (item) keyRef.current.setPage(item.name); }
       else if (e.key === 'r') keyRef.current.manualRefresh();
       else if (e.key === '/') { e.preventDefault(); setPalette(true); }
     };
@@ -204,14 +222,14 @@ function Home() {
           <button className="sidebar-search" onClick={() => setPalette(true)}>
             <Search size={14} /><span>Search & jump</span><kbd>Ctrl K</kbd>
           </button>
-          {GROUPS.map(g => <div className="nav-group" key={g}>
+          {GROUPS.filter(g => pages.some(p => p.group === g)).map(g => <div className="nav-group" key={g}>
             <div className="nav-label">{g}</div>
             <SidebarMenu className="nav-menu">
-              {NAV.map(({name: n, icon: Icon, group}, i) => group === g && (
+              {pages.map(({name: n, icon: Icon, group}, i) => group === g && (
                 <SidebarMenuItem key={n}>
                   <NavButton active={page === n} onClick={() => setPage(n)}>
                     <Icon size={17} /><span>{n}</span>
-                    {counts[n] !== undefined ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : <kbd className="nav-key">{(i + 1) % 10}</kbd>}
+                    {counts[n] ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : i < 10 ? <kbd className="nav-key">{(i + 1) % 10}</kbd> : null}
                   </NavButton>
                 </SidebarMenuItem>
               ))}
@@ -278,22 +296,23 @@ function Home() {
           )}
 
           {page === 'Overview' && <>
-            <StatCards d={d} />
+            <StatCards d={d} go={setPage} />
             <div className="chart-layout">
               <ActivityPanel d={d} />
               <HealthPanel d={d} error={error} go={setPage} />
             </div>
-            <div className="services-grid">{containersPanel()}{tmuxPanel()}</div>
-            <AiPanel d={d} busy={busy} pending={pending} onAgent={agentAction} />
+            {(has('docker') || has('tmux')) && <div className={`services-grid${has('docker') && has('tmux') ? '' : ' single'}`}>{has('docker') && containersPanel()}{has('tmux') && tmuxPanel()}</div>}
+            {has('ai') && <AiPanel d={d} busy={busy} pending={pending} onAgent={agentAction} />}
             <EventsPanel d={d} now={now} />
           </>}
-          {page === 'Resources' && <><StatCards d={d} /><ActivityPanel d={d} /><ProcessesPanel d={d} /><GpuPanel d={d} /></>}
-          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /></>}
+          {page === 'Resources' && <><StatCards d={d} go={setPage} /><ActivityPanel d={d} /><ProcessesPanel d={d} /><GpuPanel d={d} /></>}
+          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /><FeaturesPanel features={d?.features} /></>}
           {page === 'Storage' && <StoragePanel d={d} />}
           {page === 'Containers' && containersPanel(true)}
           {page === 'Tmux sessions' && tmuxPanel(true)}
-          {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} /><ModelsPanel d={d} /></>}
+          {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} />{(!d || d.ollamaOnline || d.agents.some(x => x.name === 'ollama' && x.installed)) && <ModelsPanel d={d} />}</>}
           {page === 'Hosted services' && <PowerPanel mode="services" token={d?.token} />}
+          {page === 'Energy' && <EnergyPanel live={d?.energy} />}
           {page === 'Sleep & power' && <PowerPanel mode="settings" token={d?.token} />}
           {page === 'Traffic' && <TrafficPanel token={d?.token} />}
 
@@ -303,7 +322,7 @@ function Home() {
           </footer>
         </div>
       </main>
-      <MobileTabs page={page} go={setPage} alerts={unread} />
+      <MobileTabs page={page} pages={pages} go={setPage} alerts={unread} />
 
       {/* Command palette */}
       <Dialog open={palette} onOpenChange={setPalette}>
@@ -315,15 +334,15 @@ function Home() {
             <CommandList>
               <CommandEmpty>No results.</CommandEmpty>
               <CommandGroup heading="Pages">
-                {NAV.map(({name: n, icon: Icon}, i) => (
+                {pages.map(({name: n, icon: Icon}, i) => (
                   <CommandItem key={n} value={`page ${n}`} onSelect={() => { setPage(n); setPalette(false); }}>
-                    <Icon /><span>{n}</span><CommandShortcut>{(i + 1) % 10}</CommandShortcut>
+                    <Icon /><span>{n}</span>{i < 10 && <CommandShortcut>{(i + 1) % 10}</CommandShortcut>}
                   </CommandItem>
                 ))}
               </CommandGroup>
               <CommandGroup heading="Actions">
                 <CommandItem value="refresh status" onSelect={() => { setPalette(false); manualRefresh(); }}><RefreshCw /><span>Refresh status</span><CommandShortcut>R</CommandShortcut></CommandItem>
-                <CommandItem value="new tmux session create" onSelect={() => { setPalette(false); setCreating(true); }}><Plus /><span>New tmux session</span></CommandItem>
+                {has('tmux') && <CommandItem value="new tmux session create" onSelect={() => { setPalette(false); setCreating(true); }}><Plus /><span>New tmux session</span></CommandItem>}
               </CommandGroup>
               {containers.length > 0 && <CommandGroup heading="Container logs">
                 {containers.map(c => <CommandItem key={c.ID} value={`logs ${c.Names} ${c.Image}`} onSelect={() => { setPalette(false); action('docker', c.ID, 'logs', c.Names); }}><Box /><span>{c.Names}</span><CommandShortcut>{c.State}</CommandShortcut></CommandItem>)}
@@ -396,13 +415,16 @@ function UptimeBlock({d, uptime}: {d: Status | null; uptime: number}) {
 }
 
 /** Bottom tab bar on phones: the most-watched pages one tap away, the rest behind "More". */
-function MobileTabs({page, go, alerts}: {page: PageName; go: (p: string) => void; alerts: number}) {
+function MobileTabs({page, pages, go, alerts}: {page: PageName; pages: NavItem[]; go: (p: string) => void; alerts: number}) {
   const {setOpenMobile} = useSidebar();
-  const inTabs = TABS.some(t => t.name === page);
+  // Preferred tabs that exist on this machine, topped up to four from the remaining pages in menu order.
+  const tabs = TABS.filter(t => pages.some(p => p.name === t.name));
+  for (const p of pages) if (tabs.length < TABS.length && !tabs.some(t => t.name === p.name)) tabs.push({name: p.name, label: p.name.split(' ')[0]});
+  const inTabs = tabs.some(t => t.name === page);
   const more = NAV.find(n => n.name === page)!;
   return (
     <nav className="mobile-tabs" aria-label="Pages">
-      {TABS.map(t => {
+      {tabs.map(t => {
         const Icon = NAV.find(n => n.name === t.name)!.icon;
         return <button key={t.name} className={page === t.name ? 'on' : ''} aria-current={page === t.name ? 'page' : undefined} onClick={() => go(t.name)}><Icon size={19} /><span>{t.label}</span></button>;
       })}

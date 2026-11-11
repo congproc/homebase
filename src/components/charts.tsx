@@ -9,10 +9,11 @@ const GAP = 20000; // readings arrive every 5 s; anything longer is a pause or s
 const GAP_SHOWN = 15000; // a pause is drawn as this much time, so an hour unwatched doesn't squash the live data into a sliver
 
 /** X position (0..W) for each point: by timestamp when known (pauses collapsed), otherwise evenly spaced. */
-function xs(n: number, times?: number[]) {
+// `gap` is the longest normal spacing between readings; `collapse` draws longer pauses narrow instead of to scale.
+function xs(n: number, times?: number[], gap = GAP, collapse = true) {
   if (times && times.length === n && n > 1 && times[n - 1] > times[0]) {
     let acc = 0;
-    const t = times.map((v, i) => { const step = i ? v - times[i - 1] : 0; return (acc += step > GAP ? GAP_SHOWN : step); });
+    const t = times.map((v, i) => { const step = i ? v - times[i - 1] : 0; return (acc += collapse && step > gap ? GAP_SHOWN : step); });
     const span = t[n - 1] || 1;
     return t.map(v => (v / span) * W);
   }
@@ -21,14 +22,14 @@ function xs(n: number, times?: number[]) {
 }
 
 /** Line + area paths; the line breaks wherever readings stopped for a while. */
-function path(values: number[], max: number, h: number, pad = 4, times?: number[]) {
+function path(values: number[], max: number, h: number, pad = 4, times?: number[], gap = GAP, collapse = true) {
   if (!values.length) return {line: '', area: ''};
-  const x = xs(values.length, times);
+  const x = xs(values.length, times, gap, collapse);
   const y = (v: number) => h - Math.min(Math.max(v, 0) / max, 1) * (h - pad);
   let line = '', area = '', start = 0;
   const close = (end: number) => { area += `${line.slice(line.lastIndexOf('M'))} L${x[end].toFixed(1)},${h} L${x[start].toFixed(1)},${h} Z `; };
   values.forEach((v, i) => {
-    const brk = i > 0 && times && times[i] - times[i - 1] > GAP;
+    const brk = i > 0 && times && times[i] - times[i - 1] > gap;
     if (brk) { close(i - 1); start = i; }
     line += `${i === 0 || brk ? 'M' : 'L'}${x[i].toFixed(1)},${y(v).toFixed(1)} `;
   });
@@ -72,7 +73,11 @@ export function Ring({value, color, size = 44}: {value: number; color: string; s
 export type Series = {label: string; color: string; values: number[]};
 
 /** Interactive area chart with a hover crosshair and tooltip. */
-export function AreaChart({series, times, max, floor = 1, format, height = 190}: {series: Series[]; times: number[]; max?: number; floor?: number; format: (v: number) => string; height?: number}) {
+export function AreaChart({series, times, max, floor = 1, format, height = 190, gap = GAP, collapseGaps = true, gapLabel = 'while unwatched', timeLabel}: {
+  series: Series[]; times: number[]; max?: number; floor?: number; format: (v: number) => string; height?: number;
+  /** Longest normal spacing between readings (ms); longer is drawn as a break. */ gap?: number;
+  collapseGaps?: boolean; gapLabel?: string; timeLabel?: (t: number) => string;
+}) {
   const id = safeId(useId());
   const ref = useRef<HTMLDivElement>(null);
   const [hoverRaw, setHover] = useState<number | null>(null);
@@ -85,7 +90,7 @@ export function AreaChart({series, times, max, floor = 1, format, height = 190}:
   const n = times.length;
   const hover = hoverRaw !== null && hoverRaw < n ? hoverRaw : null; // data can shrink while hovering
   const ticks = [1, 0.75, 0.5, 0.25, 0];
-  const px = useMemo(() => xs(n, times), [n, times]);
+  const px = useMemo(() => xs(n, times, gap, collapseGaps), [n, times, gap, collapseGaps]);
   const onMove = (e: React.PointerEvent) => {
     const box = ref.current?.getBoundingClientRect();
     if (!box || n < 2) return;
@@ -96,7 +101,8 @@ export function AreaChart({series, times, max, floor = 1, format, height = 190}:
   };
   const hx = hover === null ? 0 : (px[hover] / W) * 100;
   const short = n > 1 && times[n - 1] - times[0] < 180000; // under 3 min: minute labels would repeat
-  const gaps = useMemo(() => times.reduce((k, t, i) => k + (i && t - times[i - 1] > GAP ? 1 : 0), 0), [times]);
+  const gaps = useMemo(() => times.reduce((k, t, i) => k + (i && t - times[i - 1] > gap ? 1 : 0), 0), [times, gap]);
+  const label = timeLabel ?? ((t: number) => clock(t, short));
   return (
     <div className="area-chart">
       <div className="area-ticks" style={{height}}>
@@ -115,7 +121,7 @@ export function AreaChart({series, times, max, floor = 1, format, height = 190}:
             </defs>
             {ticks.map(t => <line key={t} x1="0" x2={W} y1={height - t * (height - 4)} y2={height - t * (height - 4)} className="grid-line" vectorEffect="non-scaling-stroke" />)}
             {n > 1 && series.map((s, i) => {
-              const {line, area} = path(s.values, top, height, 4, times);
+              const {line, area} = path(s.values, top, height, 4, times, gap, collapseGaps);
               return <g key={s.label} className="reveal">
                 <path d={area} fill={`url(#${id}-${i})`} />
                 <path d={line} fill="none" stroke={s.color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
@@ -132,14 +138,14 @@ export function AreaChart({series, times, max, floor = 1, format, height = 190}:
               <span key={s.label} className="crosshair-dot" style={{left: `${hx}%`, top: height - Math.min(s.values[hover] / top, 1) * (height - 4), background: s.color}} />
             ))}
             <div className={`chart-tooltip ${hx > 70 ? 'flip' : ''}`} style={{left: `${hx}%`}}>
-              <small>{clock(times[hover], true)}</small>
+              <small>{timeLabel ? timeLabel(times[hover]) : clock(times[hover], true)}</small>
               {series.map(s => <div key={s.label}><i style={{background: s.color}} />{s.label}<strong>{format(s.values[hover])}</strong></div>)}
             </div>
           </>}
         </div>
         <div className="area-times">
-          <span>{n ? clock(times[0], short) : '—'}</span>
-          {n > 2 && <span>{gaps ? `${gaps} ${gaps === 1 ? 'pause' : 'pauses'} while unwatched` : clock((times[0] + times[n - 1]) / 2, short)}</span>}
+          <span>{n ? label(times[0]) : '—'}</span>
+          {n > 2 && <span>{gaps ? `${gaps} ${gaps === 1 ? 'pause' : 'pauses'} ${gapLabel}` : label((times[0] + times[n - 1]) / 2)}</span>}
           <span>Now</span>
         </div>
       </div>
