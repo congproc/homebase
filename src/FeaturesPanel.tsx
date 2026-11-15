@@ -3,11 +3,11 @@ import {Panel, Pill} from './components/panels';
 import type {FeatureId, Features} from './lib/types';
 
 const INFO: Record<FeatureId, {name: string; icon: React.ElementType; where: string; enable: string}> = {
-  docker: {name: 'Containers', icon: Box, where: 'Containers page, Overview panel', enable: 'Install Docker Engine and add your account to the docker group.'},
-  tmux: {name: 'Tmux sessions', icon: Terminal, where: 'Tmux page, Overview panel, “Start in tmux” for agents', enable: 'Install tmux (sudo apt install tmux).'},
-  ai: {name: 'AI services', icon: Zap, where: 'AI services page, Overview panel', enable: 'Install Claude Code, Codex or Ollama.'},
+  docker: {name: 'Containers', icon: Box, where: 'Services → Containers, health summary on Overview', enable: 'Install Docker Engine and add your account to the docker group.'},
+  tmux: {name: 'Tmux sessions', icon: Terminal, where: 'AI & terminals page, “Start in tmux” for agents', enable: 'Install tmux (sudo apt install tmux).'},
+  ai: {name: 'AI services', icon: Zap, where: 'AI & terminals page, health summary on Overview', enable: 'Install Claude Code, Codex, Antigravity or Ollama.'},
   traffic: {name: 'Traffic', icon: BarChart3, where: 'Traffic page and security alerts', enable: 'Add your sites under "traffic.sites" in the config.'},
-  energy: {name: 'Power monitor', icon: Plug, where: 'Energy page, Power card on Overview', enable: 'Add a Tapo P110 / P110M / P115 plug under "energy.tapo" in the config.'},
+  energy: {name: 'Power monitor', icon: Plug, where: 'Power → Usage & cost, Power card on Overview', enable: 'Add a Tapo P110 / P110M / P115 plug under "energy.tapo" in the config.'},
   gpu: {name: 'GPU', icon: Gauge, where: 'GPU card and charts on Resources', enable: 'Appears by itself when an NVIDIA, AMD or Intel GPU is present.'},
 };
 

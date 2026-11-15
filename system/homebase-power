@@ -1,5 +1,6 @@
 #!/usr/bin/python3 -I
-"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads and desktop on/off."""
+"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads, desktop on/off
+and power profiles."""
 import fcntl
 import json
 import os
@@ -241,6 +242,93 @@ def smart(name):
         return {'error': (messages[0] if messages else 'smartctl failed')[:200]}
     return smart_summary(data)
 
+
+# ---------- power profiles ----------
+# eco / balanced / performance: power-profiles-daemon profile (CPU energy preference), the CPU package power limits
+# (Intel RAPL PL1 sustained / PL2 burst) and the NVIDIA board power limit, derived from each machine's own
+# firmware and driver defaults, so nothing is ever set above what the hardware ships with.
+PROFILES = ('eco', 'balanced', 'performance')
+PPD = {'eco': 'power-saver', 'balanced': 'balanced', 'performance': 'performance'}
+POWERPROFILESCTL = '/usr/bin/powerprofilesctl'
+NVIDIA_SMI = '/usr/bin/nvidia-smi'
+RAPL = pathlib.Path('/sys/class/powercap/intel-rapl:0')
+# /run is emptied at boot, so the first profile change after boot records the firmware's untouched limits.
+RAPL_DEFAULTS = pathlib.Path('/run/homebase-rapl.json')
+WATT = 1_000_000  # RAPL works in microwatts
+
+def rapl_constraints():
+    """{'long_term': index, 'short_term': index} for the package domain."""
+    found = {}
+    for i in range(4):
+        name = RAPL / f'constraint_{i}_name'
+        if name.is_file():
+            found[name.read_text().strip()] = i
+    return {k: v for k, v in found.items() if k in ('long_term', 'short_term')}
+
+def rapl_defaults():
+    if RAPL_DEFAULTS.is_file():
+        return json.loads(RAPL_DEFAULTS.read_text())
+    idx = rapl_constraints()
+    if 'long_term' not in idx:
+        return None
+    values = {k: int((RAPL / f'constraint_{i}_power_limit_uw').read_text()) for k, i in idx.items()}
+    if values.get('long_term', 0) <= 0:
+        return None
+    atomic_write(RAPL_DEFAULTS, json.dumps(values) + '\n')
+    return values
+
+def rapl_targets(profile, defaults):
+    """Microwatt limits for a profile. Eco holds sustained power near half the rated TDP and caps bursts at it."""
+    pl1 = defaults['long_term']
+    pl2 = defaults.get('short_term', pl1)
+    if profile == 'eco':
+        return {'long_term': max(15 * WATT, round(pl1 * 0.55 / WATT) * WATT), 'short_term': min(pl2, pl1)}
+    if profile == 'balanced':
+        return {'long_term': pl1, 'short_term': min(pl2, pl1 * 2)}
+    return {'long_term': pl1, 'short_term': pl2}
+
+def gpu_target(profile, minimum, default):
+    if profile == 'eco':
+        return minimum
+    if profile == 'balanced':
+        return round((minimum + default) / 2)
+    return default
+
+def set_profile(profile):
+    if profile not in PROFILES:
+        raise ValueError('Unknown power profile')
+    if os.geteuid() != 0:
+        raise ValueError('Power profiles require administrator privileges')
+    applied, skipped = [], []
+    with acquire_lock():
+        if os.path.isfile(POWERPROFILESCTL):
+            r = run([POWERPROFILESCTL, 'set', PPD[profile]], check=False)
+            if r.returncode and profile == 'performance':  # some machines offer no performance profile
+                r = run([POWERPROFILESCTL, 'set', 'balanced'], check=False)
+            (skipped if r.returncode else applied).append('cpu-profile' if not r.returncode else 'cpu-profile: ' + (r.stderr.strip() or 'failed')[:120])
+        else:
+            skipped.append('cpu-profile: power-profiles-daemon is not installed')
+        defaults = rapl_defaults() if RAPL.is_dir() else None
+        if defaults:
+            idx = rapl_constraints()
+            for key, value in rapl_targets(profile, defaults).items():
+                if key in idx:
+                    (RAPL / f'constraint_{idx[key]}_power_limit_uw').write_text(str(value))
+            applied.append('cpu-power-limit')
+        else:
+            skipped.append('cpu-power-limit: no Intel RAPL package domain')
+        if os.path.isfile(NVIDIA_SMI):
+            q = run([NVIDIA_SMI, '--query-gpu=index,power.min_limit,power.default_limit', '--format=csv,noheader,nounits'], check=False)
+            for line in q.stdout.strip().splitlines() if not q.returncode else []:
+                try:
+                    index, minimum, default = [part.strip() for part in line.split(',')]
+                    watts = gpu_target(profile, float(minimum), float(default))
+                except ValueError:
+                    continue  # [N/A]: this GPU has no adjustable limit
+                r = run([NVIDIA_SMI, '-i', str(int(index)), '-pl', f'{watts:.0f}'], check=False)
+                (skipped if r.returncode else applied).append(f'gpu{index}-power-limit' if not r.returncode else f'gpu{index}-power-limit: ' + (r.stdout.strip() or r.stderr.strip() or 'failed')[-120:])
+    return {'profile': profile, 'applied': applied, 'skipped': skipped}
+
 def main():
     if len(sys.argv) < 2:
         raise ValueError('Missing operation')
@@ -261,6 +349,8 @@ def main():
         return control_service(sys.argv[2], sys.argv[3])
     elif command == 'desktop' and len(sys.argv) == 3:
         return desktop(sys.argv[2])
+    elif command == 'profile' and len(sys.argv) == 3:
+        print(json.dumps(set_profile(sys.argv[2])))
     elif command == 'smart' and len(sys.argv) == 3:
         print(json.dumps(smart(sys.argv[2])))
     elif command == 'wake-time' and len(sys.argv) == 2:

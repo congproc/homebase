@@ -4,12 +4,12 @@ const pct1 = (v: number) => String(Math.round(v * 10) / 10);
 /** Swaps a button icon for a spinner while that exact action is in flight. */
 const Busy = ({on, size = 14, children}: {on: boolean; size?: number; children: React.ReactNode}) => on ? <RefreshCw size={size} className="spin" /> : <>{children}</>;
 import {
-  Activity, AlertTriangle, ArrowDown, Clock, ArrowUp, ArrowUpDown, Box, Check, ChevronRight, Copy, Cpu, HardDrive, Layers,
+  Activity, AlertTriangle, ArrowDown, Clock, ArrowUp, ArrowUpDown, Box, Check, ChevronRight, Copy, Cpu, ExternalLink, HardDrive, Layers,
   Gauge, MemoryStick, Network, Play, Plug, Plus, Power, RefreshCw, Search, Square, Terminal, Trash2, WifiOff, X,
 } from 'lucide-react';
 import {Table, TableHeader, TableBody, TableRow, TableHead, TableCell} from '@/components/ui/table';
 import {AreaChart, Ring, Sparkline} from './charts';
-import {ClaudeIcon, CodexIcon, OllamaIcon} from './agent-icons';
+import {AntigravityIcon, ClaudeIcon, CodexIcon, OllamaIcon} from './agent-icons';
 import {toast} from 'sonner';
 import {Num} from './motion';
 import {ago, bytes, clock, diskHealth, elapsed, energy, featureOn, health, levelColor, levelFor, money, rate, watts} from '../lib/format';
@@ -105,7 +105,7 @@ function PowerCard({d, go}: {d: Status; go?: (page: string) => void}) {
   const monthly = e.monthlyCost != null ? `≈ ${money(e.monthlyCost, e.currency)}/mo${e.costBasis === 'always-on' ? ' 24/7' : ''}` : null;
   const warn = e.available && (e.device?.overheated || (e.device?.protection.length ?? 0) > 0);
   return (
-    <button type="button" className="stat stat-link" onClick={() => go?.('Energy')} title="Open Energy for history and cost">
+    <button type="button" className="stat stat-link" onClick={() => go?.('power/usage')} title="Open Power → Usage & cost for history and cost">
       <div className="stat-label"><span><Plug size={15} />Power</span>{!e.available ? <span className="status muted"><i />Offline</span> : warn ? <span className="status warn"><i />Check plug</span> : null}</div>
       <div className="stat-value">{e.available && e.watts != null ? <><Num value={e.watts} format={v => watts(v).replace(' W', '')} /><small>W</small></> : '—'}</div>
       <div className="stat-sub">{e.available ? `${energy(today)} today${monthly ? ` · ${monthly}` : ''}` : e.error || 'Plug unreachable'}</div>
@@ -174,15 +174,20 @@ export function HealthPanel({d, error, go}: {d: Status | null; error: string; go
         </div>
       </div>
       <div className="health-row"><span>Load average <em>1 / 5 / 15m</em></span><strong className="mono">{d?.load.map(v => v.toFixed(2)).join(' / ') || '—'}</strong></div>
-      {on('docker') && <button className="health-row link" onClick={() => go('Containers')}><span>Running containers</span><strong>{running} <span className="dim">/ {containers.length}</span></strong></button>}
-      {on('tmux') && <button className="health-row link" onClick={() => go('Tmux sessions')}><span>Tmux sessions</span><strong>{d?.sessions.items.length ?? '—'}</strong></button>}
+      {on('docker') && <button className="health-row link" onClick={() => go('services/containers')}><span>Running containers</span><strong>{running} <span className="dim">/ {containers.length}</span></strong></button>}
+      {on('tmux') && <button className="health-row link" onClick={() => go('ai')}><span>Tmux sessions</span><strong>{d?.sessions.items.length ?? '—'}</strong></button>}
       {!!d?.disks?.items.length && (() => {
         const levels = d.disks.items.map(x => diskHealth(x).level), bad = levels.filter(l => l !== 'ok').length;
         const hottest = Math.max(...d.disks.items.map(x => x.temperature ?? -Infinity));
         return <button className="health-row link" onClick={() => go('Storage')}><span>Drives</span>
           <span className={bad ? (levels.includes('critical') ? 'red' : 'amber') : 'lime'}>{bad ? `${bad} need${bad === 1 ? 's' : ''} attention` : `${d.disks.items.length} healthy`}{Number.isFinite(hottest) ? <span className="dim"> · {Math.round(hottest)}°C</span> : null}</span></button>;
       })()}
-      {ollama && <button className="health-row link" onClick={() => go('AI services')}><span>Ollama API</span><span className={d?.ollamaOnline ? 'lime' : 'dim'}>{d?.ollamaOnline ? `Connected · ${d.models.length} loaded` : 'Unavailable'}</span></button>}
+      {on('ai') && d && (() => {
+        const live = d.agents.filter(a => a.name !== 'ollama' && a.processes?.length);
+        return <button className="health-row link" onClick={() => go('ai')}><span>Coding agents</span>
+          <span className={live.length ? 'lime' : 'dim'}>{live.length ? `${live.length} running` : 'None running'}</span></button>;
+      })()}
+      {ollama && <button className="health-row link" onClick={() => go('ai')}><span>Ollama API</span><span className={d?.ollamaOnline ? 'lime' : 'dim'}>{d?.ollamaOnline ? `Connected · ${d.models.length} loaded` : 'Unavailable'}</span></button>}
     </Panel>
   );
 }
@@ -269,83 +274,100 @@ export function TmuxPanel({d, now, busy, pending, onOpen, onCreate, onKill, go}:
 
 /* ---------- AI ---------- */
 
-const AGENT_META: Record<string, {title: string; cls: string; icon: React.ReactNode; tagline: string; install: string}> = {
+type AgentMeta = {title: string; cls: string; icon: React.ReactNode; tagline: string; install?: string; installUrl?: string; service?: boolean};
+
+export const AGENT_META: Record<string, AgentMeta> = {
   claude: {title: 'Claude Code', cls: 'logo-claude', icon: <ClaudeIcon size={21} />, tagline: 'Anthropic coding agent', install: 'curl -fsSL https://claude.ai/install.sh | bash'},
   codex: {title: 'Codex', cls: 'logo-codex', icon: <CodexIcon size={21} />, tagline: 'OpenAI coding agent', install: 'npm install -g @openai/codex'},
-  ollama: {title: 'Ollama', cls: 'logo-ollama', icon: <OllamaIcon size={22} />, tagline: 'Local model runtime', install: 'curl -fsSL https://ollama.com/install.sh | sh'},
+  antigravity: {title: 'Antigravity', cls: 'logo-antigravity', icon: <AntigravityIcon size={21} />, tagline: 'Google agentic coding CLI', installUrl: 'https://antigravity.google/download'},
+  ollama: {title: 'Ollama', cls: 'logo-ollama', icon: <OllamaIcon size={22} />, tagline: 'Local model runtime', install: 'curl -fsSL https://ollama.com/install.sh | sh', service: true},
 };
+const FALLBACK_AGENTS: Agent[] = Object.keys(AGENT_META).map(name => ({name}));
+export const agentTitle = (name: string) => AGENT_META[name]?.title || name;
+
+function CopyCommand({label, command}: {label?: string; command: string}) {
+  const copy = () => navigator.clipboard.writeText(command).then(() => toast.success('Install command copied')).catch(() => toast.error('Copy the command manually'));
+  return <div className="setup-command">
+    {label && <span className="control-hint">{label}</span>}
+    <code>{command}</code>
+    <button className="button small" aria-label={label ? `Copy ${label} install command` : 'Copy install command'} title="Copy" onClick={copy}><Copy size={13} /></button>
+  </div>;
+}
+
+/** How to get a missing agent: a copyable command, or the vendor's download page. */
+const InstallHint = ({meta, label}: {meta: AgentMeta; label?: boolean}) =>
+  meta.install ? <CopyCommand label={label ? meta.title : undefined} command={meta.install} />
+  : meta.installUrl ? <div className="setup-command">{label && <span className="control-hint">{meta.title}</span>}<a className="install-link" href={meta.installUrl} target="_blank" rel="noreferrer noopener">{meta.installUrl.replace(/^https:\/\//, '')} <ExternalLink size={12} /></a></div>
+  : null;
 
 export type AgentAction = (name: string, action: 'start' | 'stop' | 'restart', pid?: number) => void;
 
-export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null; detailed?: boolean; busy: boolean; pending?: string | null; onAgent: AgentAction}) {
-  const all: Agent[] = d?.agents || [{name: 'claude'}, {name: 'codex'}, {name: 'ollama'}];
-  // Agents that aren't installed are left out; the full page lists them, folded away, with install commands.
-  const isMissing = (a: Agent) => !!d && a.installed === false && !a.processes?.length && !(a.name === 'ollama' && d.ollamaOnline);
-  const agents = all.filter(a => !isMissing(a)), absent = all.filter(isMissing);
-  const tmux = featureOn(d?.features, 'tmux');
+function AgentCard({a, d, detailed, busy, pending, tmux, onAgent}: {a: Agent; d: Status | null; detailed?: boolean; busy: boolean; pending?: string | null; tmux: boolean; onAgent: AgentAction}) {
+  const meta = AGENT_META[a.name] || {title: a.name, cls: '', icon: <Layers size={20} />, tagline: ''};
+  const procs = a.processes || [];
+  const live = procs.length > 0 || (!!meta.service && !!d?.ollamaOnline);
+  const missing = !!d && a.installed === false && !live;
+  const state = !d ? 'pending' : live ? 'live' : missing ? 'missing' : 'idle';
+  const label = {pending: 'Connecting', live: 'Running', missing: 'Not installed', idle: 'Idle'}[state];
+  const cpu = procs.reduce((n, p) => n + p.cpu, 0), mem = procs.reduce((n, p) => n + p.memory, 0);
+  const is = (act: string) => pending === `agent:${a.name}:${act}`;
   return (
-    <Panel title="AI services" sub="Coding agents and local models on this host">
-      <div className={`agents count-${agents.length}`}>{agents.map(a => {
-        const meta = AGENT_META[a.name] || {title: a.name, cls: '', icon: <Layers size={20} />, tagline: '', install: ''};
-        const procs = a.processes || [];
-        const live = procs.length > 0 || (a.name === 'ollama' && !!d?.ollamaOnline);
-        const cpu = procs.reduce((n, p) => n + p.cpu, 0);
-        const mem = procs.reduce((n, p) => n + p.memory, 0);
-        const missing = !!d && a.installed === false && !live;
-        const state = !d ? 'pending' : live ? 'live' : missing ? 'missing' : 'idle';
-        return (
-          <div className={`agent ${live ? 'live' : ''} ${missing ? 'missing' : ''}`} key={a.name}>
-            <div className="agent-top">
-              <span className={`agent-logo ${meta.cls}`}>{meta.icon}<i className={`agent-dot ${state}`} title={live ? 'Running' : missing ? 'Not installed' : 'Idle'} /></span>
-              <div><h3>{meta.title}</h3><p>{meta.tagline}</p></div>
-              <Pill on={live}>{live ? 'Running' : missing ? 'Not installed' : d ? 'Idle' : 'Connecting'}</Pill>
+    <div className={`agent ${state}`}>
+      <div className="agent-top">
+        <span className={`agent-logo ${meta.cls}`}>{meta.icon}<i className={`agent-dot ${state}`} title={label} /></span>
+        <div><h3>{meta.title}</h3><p>{meta.tagline}</p></div>
+        <Pill on={live}>{label}</Pill>
+      </div>
+      {missing ? (
+        <div className="agent-install"><small>Not found on this host’s PATH. {meta.install ? 'Install with:' : 'Download from:'}</small><InstallHint meta={meta} /></div>
+      ) : <div className="agent-metrics">
+        <div title={meta.service ? 'Models loaded in memory' : undefined}><small>{meta.service ? 'Models' : 'Processes'}</small><strong>{meta.service ? d?.models.length ?? 0 : procs.length}</strong></div>
+        <div><small>CPU</small><strong>{procs.length ? `${pct1(cpu)}%` : '—'}</strong></div>
+        <div><small>Memory</small><strong>{procs.length ? `${pct1(mem)}%` : '—'}</strong></div>
+        <div title="Longest-running process"><small>Running for</small><strong>{procs.length ? elapsed(Math.max(...procs.map(p => p.elapsed))) : '—'}</strong></div>
+      </div>}
+      {d && !missing && <div className="agent-actions">
+        {meta.service ? (live
+          ? <>
+              <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'restart')}><RefreshCw size={13} className={is('restart') ? 'spin' : ''} /> Restart</button>
+              <button className="button small danger-outline" disabled={busy} onClick={() => onAgent(a.name, 'stop')}><Busy on={is('stop')} size={13}><Power size={13} /></Busy> Stop service</button>
+            </>
+          : <button className="button small primary" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={is('start')} size={13}><Power size={13} /></Busy> Start service</button>)
+        : <>
+            {tmux && <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={is('start')} size={13}><Play size={13} /></Busy> {procs.length ? 'New session' : 'Start in tmux'}</button>}
+            {procs.length > 0 && <button className="button small danger-outline" disabled={busy} onClick={() => onAgent(a.name, 'stop')}><Busy on={is('stop')} size={13}><Power size={13} /></Busy> Stop all</button>}
+            {!tmux && !procs.length && <span className="agent-note">Install tmux to launch it from here</span>}
+          </>}
+      </div>}
+      {detailed && procs.length > 0 && (
+        <div className="process-list">
+          {[...procs].sort((x, y) => y.elapsed - x.elapsed).map(p => (
+            <div key={p.pid}><span className="mono">{p.pid}</span><span className="pname">{p.name}</span><span>{pct1(p.cpu)}%</span><span className="mono dim">{elapsed(p.elapsed)}</span>
+              {!meta.service ? <button className="proc-kill" title={`Stop PID ${p.pid}`} aria-label={`Stop ${p.name} PID ${p.pid}`} disabled={busy} onClick={() => onAgent(a.name, 'stop', p.pid)}><X size={13} /></button> : <span />}
             </div>
-            {missing && meta.install ? (
-              <div className="agent-install">
-                <small>Not found on this host’s PATH. Install with:</small>
-                <div className="setup-command">
-                  <code>{meta.install}</code>
-                  <button className="button small" aria-label={`Copy ${meta.title} install command`} title="Copy" onClick={() => navigator.clipboard.writeText(meta.install).then(() => toast.success('Install command copied')).catch(() => toast.error('Copy the command manually'))}><Copy size={13} /></button>
-                </div>
-              </div>
-            ) : <div className="agent-metrics">
-              <div title={a.name === 'ollama' ? 'Models loaded in memory' : undefined}><small>{a.name === 'ollama' ? 'Models' : 'Processes'}</small><strong>{a.name === 'ollama' ? d?.models.length ?? 0 : procs.length}</strong></div>
-              <div><small>CPU</small><strong>{procs.length ? `${cpu.toFixed(1)}%` : '—'}</strong></div>
-              <div><small>Memory</small><strong>{procs.length ? `${mem.toFixed(1)}%` : '—'}</strong></div>
-              <div title="Longest-running process"><small>Running for</small><strong>{procs.length ? elapsed(Math.max(...procs.map(p => p.elapsed))) : '—'}</strong></div>
-            </div>}
-            {d && !missing && (
-              <div className="agent-actions">
-                {a.name === 'ollama' ? (live
-                  ? <>
-                      <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'restart')}><RefreshCw size={13} className={pending === `agent:${a.name}:restart` ? 'spin' : ''} /> Restart</button>
-                      <button className="button small danger-outline" disabled={busy} onClick={() => onAgent(a.name, 'stop')}><Busy on={pending === `agent:${a.name}:stop`} size={13}><Power size={13} /></Busy> Stop service</button>
-                    </>
-                  : <button className="button small primary" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={pending === `agent:${a.name}:start`} size={13}><Power size={13} /></Busy> Start service</button>)
-                : <>
-                    {tmux && <button className="button small" disabled={busy} onClick={() => onAgent(a.name, 'start')}><Busy on={pending === `agent:${a.name}:start`} size={13}><Play size={13} /></Busy> {procs.length ? 'New session' : 'Start in tmux'}</button>}
-                    {procs.length > 0 && <button className="button small danger-outline" disabled={busy} onClick={() => onAgent(a.name, 'stop')}><Busy on={pending === `agent:${a.name}:stop`} size={13}><Power size={13} /></Busy> Stop all</button>}
-                  </>}
-              </div>
-            )}
-            {detailed && procs.length > 0 && (
-              <div className="process-list">
-                {[...procs].sort((x, y) => y.elapsed - x.elapsed).map(p => (
-                  <div key={p.pid}><span className="mono">{p.pid}</span><span className="pname">{p.name}</span><span>{p.cpu.toFixed(1)}%</span><span className="mono dim">{elapsed(p.elapsed)}</span>
-                    {a.name !== 'ollama' ? <button className="proc-kill" title={`Stop PID ${p.pid}`} aria-label={`Stop ${p.name} PID ${p.pid}`} disabled={busy} onClick={() => onAgent(a.name, 'stop', p.pid)}><X size={13} /></button> : <span />}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AiPanel({d, detailed, busy, pending, onAgent}: {d: Status | null; detailed?: boolean; busy: boolean; pending?: string | null; onAgent: AgentAction}) {
+  const all = d?.agents || FALLBACK_AGENTS;
+  // Agents that aren't installed are left out; the full page lists them, folded away, with install hints.
+  const isMissing = (a: Agent) => !!d && a.installed === false && !a.processes?.length && !(AGENT_META[a.name]?.service && d.ollamaOnline);
+  const agents = all.filter(a => !isMissing(a)), absent = all.filter(isMissing);
+  const running = agents.filter(a => a.processes?.length || (AGENT_META[a.name]?.service && d?.ollamaOnline)).length;
+  const tmux = featureOn(d?.features, 'tmux');
+  const sub = d ? `${running} of ${agents.length} running · coding agents and local models on this host` : 'Coding agents and local models on this host';
+  return (
+    <Panel title="AI services" sub={sub}>
+      <div className={`agents count-${agents.length}`}>
+        {agents.map(a => <AgentCard key={a.name} a={a} d={d} detailed={detailed} busy={busy} pending={pending} tmux={tmux} onAgent={onAgent} />)}
+      </div>
       {detailed && absent.length > 0 && <details className="agents-absent">
-        <summary>Not installed on this machine: {absent.map(a => AGENT_META[a.name]?.title || a.name).join(', ')}</summary>
-        {absent.map(a => AGENT_META[a.name]?.install && <div className="setup-command" key={a.name}>
-          <span className="control-hint">{AGENT_META[a.name].title}</span><code>{AGENT_META[a.name].install}</code>
-          <button className="button small" aria-label={`Copy ${AGENT_META[a.name].title} install command`} title="Copy" onClick={() => navigator.clipboard.writeText(AGENT_META[a.name].install).then(() => toast.success('Install command copied')).catch(() => toast.error('Copy the command manually'))}><Copy size={13} /></button>
-        </div>)}
+        <summary>Not installed on this machine: {absent.map(a => agentTitle(a.name)).join(', ')}</summary>
+        {absent.map(a => AGENT_META[a.name] && <InstallHint key={a.name} meta={AGENT_META[a.name]} label />)}
       </details>}
     </Panel>
   );

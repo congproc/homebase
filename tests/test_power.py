@@ -85,6 +85,26 @@ class PowerPolicyTest(unittest.TestCase):
         with patch.object(power.os,'geteuid',return_value=1000),self.assertRaises(ValueError):
             power.apply(self.config())
 
+class PowerProfileTest(unittest.TestCase):
+    W=1_000_000
+    def test_rapl_targets_never_exceed_firmware(self):
+        d={'long_term':65*self.W,'short_term':219*self.W}
+        self.assertEqual(power.rapl_targets('eco',d),{'long_term':36*self.W,'short_term':65*self.W})
+        self.assertEqual(power.rapl_targets('balanced',d),{'long_term':65*self.W,'short_term':130*self.W})
+        self.assertEqual(power.rapl_targets('performance',d),d)
+        for p in power.PROFILES:
+            for k,v in power.rapl_targets(p,d).items():
+                self.assertLessEqual(v,d[k])
+
+    def test_rapl_eco_floor(self):
+        self.assertEqual(power.rapl_targets('eco',{'long_term':15*self.W})['long_term'],15*self.W)
+
+    def test_gpu_targets(self):
+        self.assertEqual([power.gpu_target(p,100,170) for p in power.PROFILES],[100,135,170])
+
+    def test_unknown_profile_rejected_before_privileges(self):
+        with self.assertRaises(ValueError):power.set_profile('turbo; rm -rf /')
+
 if __name__=='__main__':unittest.main()
 
 class ServiceControlTest(unittest.TestCase):

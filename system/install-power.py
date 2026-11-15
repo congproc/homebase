@@ -49,13 +49,16 @@ USERNAME = re.compile(r'[a-z_][a-z0-9_-]{0,31}\Z')
 def sudoers_for(user):
     return (f'# Installed by Homebase. Validated sleep-policy updates and start/stop/restart of custom units in\n'
             f'# /etc/systemd/system, read-only SMART health of whole disks, and desktop on/off (boot target +\n'
-            f'# display manager), through a fixed-purpose helper;\n'
+            f'# display manager), and eco/balanced/performance power profiles, through a fixed-purpose helper;\n'
             f'# arguments are validated by the helper. No shell.\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power apply\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power service *\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power smart *\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop on\n'
-            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop off\n')
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop off\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile eco\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile balanced\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile performance\n')
 
 
 def run(*args, **kw):

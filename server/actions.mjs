@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import os from 'node:os';
 import {getPowerState} from './services.mjs';
 import {config} from './config.mjs';
+import {agentBinary, agentByName, locateTools} from './agents.mjs';
 
 const exec = (bin, args, timeout = 30000) => new Promise(resolve => {
   execFile(bin, args, {timeout, maxBuffer: 1024 * 1024}, (error, stdout, stderr) =>
@@ -14,7 +15,6 @@ const exec = (bin, args, timeout = 30000) => new Promise(resolve => {
 export const SESSION_NAME = /^[a-zA-Z0-9_-]{1,40}$/;
 const HELPER = config.powerHelper;
 const SELF = 'user:homebase.service';
-const AGENT_COMMANDS = {claude: 'claude', codex: 'codex'};
 
 /**
  * Start a detached tmux session in its own systemd scope so it survives
@@ -58,14 +58,14 @@ const commOf = pid => readFile(`/proc/${pid}/comm`, 'utf8').then(s => s.trim()).
 
 /** Terminate agent processes (SIGTERM). `pid` limits it to one process of that agent. */
 export async function stopAgent(snapshot, name, pid) {
-  const agent = snapshot.agents.find(a => a.name === name);
-  if (!agent || !AGENT_COMMANDS[name]) throw Error('Unknown agent');
+  const agent = snapshot.agents.find(a => a.name === name), spec = agentByName(name);
+  if (!agent || !spec?.launch) throw Error('Unknown agent');
   const targets = pid === undefined ? agent.processes : agent.processes.filter(p => p.pid === pid);
   if (!targets.length) throw Error('No matching running process');
   let stopped = 0;
   for (const p of targets) {
     const comm = await commOf(p.pid);
-    if (!comm || !comm.toLowerCase().includes(name)) continue; // exited or PID reused
+    if (!comm || !spec.comm.test(comm)) continue; // exited or PID reused
     try { process.kill(p.pid, 'SIGTERM'); stopped++; } catch { /* already gone or not ours */ }
   }
   if (!stopped) throw Error('Process already exited');
@@ -74,14 +74,15 @@ export async function stopAgent(snapshot, name, pid) {
 
 /** Launch an agent inside a new tmux session named after it (claude, claude-2, …). */
 export async function startAgent(snapshot, name) {
-  const command = AGENT_COMMANDS[name];
-  if (!command) throw Error('Unknown agent');
-  const which = await exec('which', [command]);
-  if (!which.ok || !which.output.startsWith('/')) throw Error(`${name} is not installed`);
+  const spec = agentByName(name);
+  if (!spec?.launch) throw Error('Unknown agent');
+  // Prefer the terminal binary (agy over the antigravity IDE): the session runs in tmux.
+  const binary = agentBinary(spec, await locateTools());
+  if (!binary) throw Error(`${spec.label} is not installed`);
   const taken = new Set(snapshot.sessions.items.map(s => s.name));
   let session = name;
   for (let i = 2; taken.has(session); i++) session = `${name}-${i}`;
-  const result = await tmuxNew(session, which.output);
-  if (!result.ok) throw Error(result.error || `Could not start ${name}`);
+  const result = await tmuxNew(session, binary);
+  if (!result.ok) throw Error(result.error || `Could not start ${spec.label}`);
   return {output: session, session};
 }

@@ -41,3 +41,9 @@ test('config overrides force features on or off; unknown ids and non-booleans ar
   assert.equal(f.ai.forced, false);
   assert.deepEqual(parseOverrides(null), {});
 });
+
+test('Antigravity counts as an AI agent through either of its binaries', () => {
+  const which = {agy: true};
+  assert.equal(detectFeatures({which, containers: {available: false}, ollamaOnline: false, gpu: null, sites: 0}).ai.reason, 'Antigravity found');
+  assert.equal(detectFeatures({which: {antigravity: true, claude: true}, containers: {available: false}, ollamaOnline: false, gpu: null, sites: 0}).ai.reason, 'Claude Code and Antigravity found');
+});

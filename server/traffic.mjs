@@ -2,6 +2,7 @@
 // plus Tailscale device/route state. The only write is the access-control file (signed-out sessions, blocked IPs),
 // which the site servers re-read within a second.
 import {open, readdir, stat, readFile, writeFile, rename, mkdir} from 'node:fs/promises';
+import {StringDecoder} from 'node:string_decoder';
 import {isIP} from 'node:net';
 import {execFile} from 'node:child_process';
 import path from 'node:path';
@@ -63,24 +64,41 @@ const ONLINE_MS = 2 * 60e3;
 
 const run = (bin, args) => new Promise(r => execFile(bin, args, {timeout: 8000, maxBuffer: 8 * 1024 * 1024}, (e, out) => r(e ? null : out)));
 
-// Per-file incremental cache: re-reads only bytes appended since the last call.
+// Per-file incremental cache: re-reads only bytes appended since the last call. Entries nobody has asked for in
+// CACHE_IDLE are dropped (a 30-day view of a busy site can hold tens of MB of parsed records), so memory returns to
+// near zero once the Traffic page is closed; reopening it re-parses those files once.
 const files = new Map();
+const CACHE_IDLE = 10 * 60e3;
+let lastSweep = 0;
+function sweepLogCache(now = Date.now()) {
+ if (now - lastSweep < 60e3) return;
+ lastSweep = now;
+ for (const [p, c] of files) if (now - c.used > CACHE_IDLE) files.delete(p);
+}
+setInterval(sweepLogCache, CACHE_IDLE).unref();
 export async function readLog(path) {
  let st; try { st = await stat(path); } catch { files.delete(path); return []; }
  let c = files.get(path);
- if (!c || st.size < c.size || st.ino !== c.ino) c = {size: 0, ino: st.ino, rest: '', records: []};
+ if (!c || st.size < c.size || st.ino !== c.ino) c = {size: 0, ino: st.ino, rest: '', decoder: new StringDecoder('utf8'), records: []};
  if (st.size > c.size) {
   const fh = await open(path, 'r');
   try {
-   const buf = Buffer.alloc(st.size - c.size);
-   await fh.read(buf, 0, buf.length, c.size);
-   const lines = (c.rest + buf.toString('utf8')).split('\n');
-   c.rest = lines.pop() || '';
-   for (const l of lines) { try { const r = JSON.parse(l); r.at = Date.parse(r.t); if (Number.isFinite(r.at)) c.records.push(r); } catch {} }
-   c.size = st.size;
+   // Bound the raw read buffer even on the first 30-day query. Preserve unfinished
+   // lines and UTF-8 characters until the writer appends the remaining bytes.
+   const buf = Buffer.alloc(64 * 1024);
+   while (c.size < st.size) {
+    const {bytesRead} = await fh.read(buf, 0, Math.min(buf.length, st.size - c.size), c.size);
+    if (!bytesRead) break;
+    const lines = (c.rest + c.decoder.write(buf.subarray(0, bytesRead))).split('\n');
+    c.rest = lines.pop() || '';
+    for (const l of lines) { try { const r = JSON.parse(l); r.at = Date.parse(r.t); if (Number.isFinite(r.at)) c.records.push(r); } catch {} }
+    c.size += bytesRead;
+   }
   } finally { await fh.close(); }
  }
+ c.used = Date.now();
  files.set(path, c);
+ sweepLogCache(c.used);
  return c.records;
 }
 

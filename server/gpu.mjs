@@ -77,12 +77,23 @@ async function defaultSmi(args) {
   return stdout;
 }
 
-async function readSmi(smi) {
+// Each nvidia-smi call costs ~40 ms of CPU (it initialises NVML). The per-process list changes slowly, so it is
+// refreshed at most every APPS_EVERY; the latest GPU rows are shared with the power-profile controller.
+const APPS_EVERY = 15000;
+let latest = {at: 0, gpus: []};
+/** The most recent nvidia-smi GPU rows if they are at most `maxAge` ms old, else null. */
+export const recentNvidia = (maxAge, now = Date.now()) => (now - latest.at <= maxAge ? latest.gpus : null);
+
+async function readSmi(smi, cache, t) {
+  const appsDue = t - cache.at >= APPS_EVERY;
   const [gpuOut, appOut] = await Promise.all([
     smi([`--query-gpu=${SMI_FIELDS.join(',')}`, '--format=csv,noheader,nounits']),
-    smi(['--query-compute-apps=gpu_uuid,pid,process_name,used_memory', '--format=csv,noheader,nounits']).catch(() => ''),
+    appsDue ? smi(['--query-compute-apps=gpu_uuid,pid,process_name,used_memory', '--format=csv,noheader,nounits']).catch(() => '') : null,
   ]);
-  return {gpus: parseGpus(gpuOut), apps: parseApps(appOut)};
+  if (appsDue) { cache.at = t; cache.apps = parseApps(appOut); }
+  const gpus = parseGpus(gpuOut);
+  latest = {at: Date.now(), gpus};
+  return {gpus, apps: cache.apps};
 }
 
 /* ---------- sysfs ---------- */
@@ -217,13 +228,15 @@ async function scanProcs(proc, ps, t) {
 /* ---------- reader ---------- */
 
 export function createGpuReader({sys = '/sys', proc = '/proc', smi = defaultSmi, pciIds = PCI_IDS} = {}) {
-  const state = new Map(), ps = {at: 0, prev: new Map(), cache: new Map()}, names = new Map();
+  const state = new Map(), ps = {at: 0, prev: new Map(), cache: new Map()}, names = new Map(), apps = {at: -Infinity, apps: []};
   let db;
   const pciName = async (v, d) => {
     const k = v + ':' + d;
     if (!names.has(k)) {
-      db ??= (async () => { for (const p of pciIds) { const s = await readFile(p, 'utf8').catch(() => null); if (s) return s; } return ''; })();
-      names.set(k, lookupPciName(await db, v, d));
+      // pci.ids is ~1.5 MB: load it only to name a device not seen before, then let it be collected.
+      const loading = db ??= (async () => { for (const p of pciIds) { const s = await readFile(p, 'utf8').catch(() => null); if (s) return s; } return ''; })();
+      names.set(k, lookupPciName(await loading, v, d));
+      db = undefined;
     }
     return names.get(k);
   };
@@ -232,7 +245,7 @@ export function createGpuReader({sys = '/sys', proc = '/proc', smi = defaultSmi,
     const devs = await devices(sys);
     let smiData = null, smiError;
     if (devs.some(d => d.driver === 'nvidia') || !devs.length) {
-      try { smiData = await readSmi(smi); } catch (e) { smiError = e.code === 'ENOENT' ? 'nvidia-smi not found — install the NVIDIA utilities for full readings' : (e.stderr?.trim() || e.message); }
+      try { smiData = await readSmi(smi, apps, t); } catch (e) { smiError = e.code === 'ENOENT' ? 'nvidia-smi not found — install the NVIDIA utilities for full readings' : (e.stderr?.trim() || e.message); }
     }
     const procs = devs.some(d => d.driver !== 'nvidia') ? await scanProcs(proc, ps, t).catch(() => new Map()) : new Map();
     const base = (id, vendor) => ({id, vendor, kind: 'discrete', driver: null, driverVersion: null, pstate: null, utilization: null, memoryUtilization: null, memory: null,

@@ -1,7 +1,7 @@
 'use client';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Menu, Moon, Plug, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
+  Activity, BarChart3, Box, ChevronRight, Clock, Copy, Download, Globe, HardDrive, LayoutDashboard, Menu, Plug, RefreshCw, Search, Server, Terminal, Trash2, Zap, Plus,
 } from 'lucide-react';
 import {SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, useSidebar} from '@/components/ui/sidebar';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from '@/components/ui/dialog';
@@ -10,41 +10,57 @@ import {Toaster, toast} from 'sonner';
 import {ConfirmProvider, useConfirm} from '../src/components/confirm';
 import PowerPanel from '../src/PowerPanel';
 import EnergyPanel from '../src/EnergyPanel';
+import {AdvisorPanel, PowerProfilePanel} from '../src/PowerProfilePanel';
 import FeaturesPanel from '../src/FeaturesPanel';
 import TrafficPanel from '../src/TrafficPanel';
 import UpdatePanel from '../src/UpdatePanel';
 import StoragePanel from '../src/StoragePanel';
 import {registerMonitoringTool} from '../src/webmcp';
 import {LogoMark, useStatusFavicon} from '../src/components/logo';
-import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, StatCards, TmuxPanel} from '../src/components/panels';
+import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, agentTitle, StatCards, TmuxPanel} from '../src/components/panels';
 import {ago, clock, elapsed, featureOn, health} from '../src/lib/format';
 import type {FeatureId, Features, Status} from '../src/lib/types';
 
 // Grouped by what you are doing: watching the machine, managing what runs on it, configuring it.
-// The 1–9/0 shortcuts follow this order.
+// The 1–8 shortcuts follow this order. Related tools share a page (with sub-tabs) instead of a page each.
 const NAV = [
   {name: 'Overview', slug: 'overview', icon: LayoutDashboard, group: 'Monitor', blurb: 'A little clarity for everything you’re running.'},
   {name: 'Resources', slug: 'resources', icon: Activity, group: 'Monitor', blurb: 'Live resource usage and the processes behind it.'},
   {name: 'Storage', slug: 'storage', icon: HardDrive, group: 'Monitor', blurb: 'Drives, filesystems, temperatures and SMART health.'},
-  {name: 'Energy', slug: 'energy', icon: Plug, group: 'Monitor', blurb: 'What the server draws from the wall, and what that costs.'},
   {name: 'Traffic', slug: 'traffic', icon: BarChart3, group: 'Monitor', blurb: 'Who is using your hosted sites, from which devices, and when.'},
-  {name: 'Containers', slug: 'containers', icon: Box, group: 'Workloads', blurb: 'Keep your services running smoothly.'},
-  {name: 'Tmux sessions', slug: 'tmux', icon: Terminal, group: 'Workloads', blurb: 'Persistent terminals, always within reach.'},
-  {name: 'AI services', slug: 'ai', icon: Zap, group: 'Workloads', blurb: 'Monitor your coding agents and local models.'},
-  {name: 'Hosted services', slug: 'services', icon: Globe, group: 'Workloads', blurb: 'Your apps, their health, and how they affect sleep.'},
-  {name: 'Hosts', slug: 'hosts', icon: Server, group: 'System', blurb: 'The machine that keeps your home lab running.'},
-  {name: 'Sleep & power', slug: 'power', icon: Moon, group: 'System', blurb: 'Save power without losing track of your work.'},
+  {name: 'Services', slug: 'services', icon: Globe, group: 'Workloads', blurb: 'Your apps and containers, their health, and whether they keep the server awake.'},
+  {name: 'AI & terminals', slug: 'ai', icon: Zap, group: 'Workloads', blurb: 'Coding agents, local models and persistent tmux sessions.'},
+  {name: 'Power', slug: 'power', icon: Plug, group: 'System', blurb: 'What the server draws, what it costs, and how it saves power.'},
+  {name: 'Host', slug: 'host', icon: Server, group: 'System', blurb: 'This machine, Homebase updates, and which features apply here.'},
 ] as const;
 const GROUPS = ['Monitor', 'Workloads', 'System'] as const;
-/** Pages on the phone tab bar; everything else lives behind "More". */
-const TABS: {name: PageName; label: string}[] = [{name: 'Overview', label: 'Overview'}, {name: 'Resources', label: 'Resources'}, {name: 'Storage', label: 'Storage'}, {name: 'AI services', label: 'AI'}];
 type PageName = typeof NAV[number]['name'];
 type NavItem = typeof NAV[number];
-/** Pages that only make sense when a feature is present on this machine. */
-const PAGE_FEATURE: Partial<Record<PageName, FeatureId>> = {Containers: 'docker', 'Tmux sessions': 'tmux', 'AI services': 'ai', Traffic: 'traffic', Energy: 'energy'};
+/** Sub-tabs of the pages that combine several tools; a tab with a feature only shows when it is on. */
+const SUBTABS: Partial<Record<PageName, {id: string; label: string; feature?: FeatureId}[]>> = {
+  Services: [{id: 'hosted', label: 'Hosted services'}, {id: 'containers', label: 'Containers', feature: 'docker'}],
+  Power: [{id: 'usage', label: 'Usage & cost', feature: 'energy'}, {id: 'save', label: 'Save power'}, {id: 'sleep', label: 'Sleep & desktop'}],
+};
+/** Former page names and URLs (bookmarks, links in older code or server messages) → where that content lives now. */
+const ALIASES: Record<string, string> = {
+  'energy': 'power/usage', 'sleep & power': 'power/sleep', 'containers': 'services/containers', 'hosted services': 'services/hosted',
+  'tmux': 'ai', 'tmux sessions': 'ai', 'ai services': 'ai', 'hosts': 'host',
+};
+/** Pages on the phone tab bar; everything else lives behind "More". */
+const TABS: {name: PageName; label: string}[] = [{name: 'Overview', label: 'Overview'}, {name: 'Resources', label: 'Resources'}, {name: 'AI & terminals', label: 'AI'}, {name: 'Power', label: 'Power'}];
+/** Pages that only make sense when one of their features is present on this machine. */
+const PAGE_FEATURES: Partial<Record<PageName, FeatureId[]>> = {'AI & terminals': ['ai', 'tmux'], Traffic: ['traffic']};
+type Route = {page: PageName; tab?: string};
+/** "Power", "power/sleep", "Sleep & power", "#/energy" … → a page and optional sub-tab. */
+function resolve(target: string): Route | null {
+  const raw = target.replace(/^#?\/?/, '');
+  const [head, tab] = (ALIASES[raw.toLowerCase()] ?? raw).split('/');
+  const item = NAV.find(n => n.name === head || n.slug === head.toLowerCase());
+  return item ? {page: item.name, tab: tab || undefined} : null;
+}
+const fromHash = (): Route => resolve(window.location.hash) ?? {page: 'Overview'};
 const FEATURES_KEY = 'homebase.features';
 const cachedFeatures = (): Features | null => { try { return JSON.parse(localStorage.getItem(FEATURES_KEY) || 'null'); } catch { return null; } };
-const fromHash = (): PageName => NAV.find(n => n.slug === window.location.hash.replace(/^#\/?/, ''))?.name ?? 'Overview';
 
 type Output = {title: string; body: string; session?: string; container?: string};
 
@@ -57,7 +73,8 @@ function Home() {
   useEffect(registerMonitoringTool, []);
   const [d, setData] = useState<Status | null>(null);
   const [error, setError] = useState('');
-  const [page, setPageState] = useState<PageName>(fromHash);
+  const [route, setRoute] = useState<Route>(fromHash);
+  const page = route.page;
   const [output, setOutput] = useState<Output | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -68,16 +85,18 @@ function Home() {
   const [palette, setPalette] = useState(false);
   const [updateRequest, setUpdateRequest] = useState(0); // top-bar Update button presses
 
-  const setPage = useCallback((p: string) => {
-    const item = NAV.find(n => n.name === p);
-    if (!item) return;
-    setPageState(item.name);
-    if (window.location.hash !== `#/${item.slug}`) history.pushState(null, '', `#/${item.slug}`);
+  // `replace` is for automatic redirects, so Back doesn't land on a page that redirects again.
+  const setPage = useCallback((target: string, replace = false) => {
+    const next = resolve(target);
+    if (!next) return;
+    setRoute(next);
+    const hash = `#/${NAV.find(n => n.name === next.page)!.slug}${next.tab ? '/' + next.tab : ''}`;
+    if (window.location.hash !== hash) history[replace ? 'replaceState' : 'pushState'](null, '', hash);
     window.scrollTo({top: 0}); // the document scrolls, not .main
   }, []);
 
   useEffect(() => {
-    const onPop = () => setPageState(fromHash());
+    const onPop = () => setRoute(fromHash());
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -148,9 +167,12 @@ function Home() {
   const featureKey = d?.features ? JSON.stringify(d.features) : '';
   useEffect(() => { if (featureKey) try { localStorage.setItem(FEATURES_KEY, featureKey); } catch { /* private mode */ } }, [featureKey]);
   const has = useCallback((f: FeatureId) => featureOn(features, f), [features]);
-  const pages: NavItem[] = NAV.filter(n => { const f = PAGE_FEATURE[n.name]; return !f || has(f); });
+  const visible = (n: PageName) => { const f = PAGE_FEATURES[n]; return !f || f.some(has); };
+  const pages: NavItem[] = NAV.filter(n => visible(n.name));
+  const tabs = (SUBTABS[page] || []).filter(t => !t.feature || has(t.feature));
+  const tab = tabs.find(t => t.id === route.tab)?.id ?? tabs[0]?.id;
   // A bookmarked page for a feature this machine doesn't have falls back to the overview.
-  useEffect(() => { const f = PAGE_FEATURE[page]; if (d?.features && f && !d.features[f].on) setPage('Overview'); }, [d?.features, page, setPage]);
+  useEffect(() => { const f = PAGE_FEATURES[page]; if (d?.features && f && !f.some(x => d.features![x].on)) setPage('Overview', true); }, [d?.features, page, setPage]);
 
   const keyRef = useRef({setPage, manualRefresh, pages});
   useEffect(() => { keyRef.current = {setPage, manualRefresh, pages}; });
@@ -173,7 +195,8 @@ function Home() {
   const nav = NAV.find(n => n.name === page)!;
   const h = health(d, error);
   const stale = d ? now - d.at : 0;
-  const counts: Partial<Record<PageName, number>> = {Containers: containers.length, 'Tmux sessions': sessions.length, ...(d?.alertsUnread ? {Traffic: d.alertsUnread} : {})};
+  // Badges only for things that need attention; plain counts live on the pages themselves.
+  const counts: Partial<Record<PageName, number>> = d?.alertsUnread ? {Traffic: d.alertsUnread} : {};
   useStatusFavicon(h.level);
   const unread = d?.alertsUnread || 0;
   useEffect(() => { document.title = `${unread ? `(${unread}) ` : ''}${page} · Homebase`; }, [page, unread]);
@@ -185,7 +208,7 @@ function Home() {
     lastUnread.current = n;
   }, [d?.alertsUnread, setPage]);
 
-  const containersPanel = (full?: boolean) => <ContainersPanel d={d} busy={busy} pending={pending} full={full} go={full ? undefined : () => setPage('Containers')}
+  const containersPanel = (full?: boolean) => <ContainersPanel d={d} busy={busy} pending={pending} full={full} go={full ? undefined : () => setPage('services/containers')}
     onAction={(id, act) => action('docker', id, act, containers.find(c => c.ID === id)?.Names)} onConfirm={async (c, act) => {
       if (await ask({title: `${act === 'stop' ? 'Stop' : 'Restart'} ${c.Names}?`, body: `This interrupts whatever is running in the container. ${act === 'stop' ? 'It stays stopped until you start it again.' : 'It should be back within a few seconds.'}`, confirm: act === 'stop' ? 'Stop container' : 'Restart container', destructive: act === 'stop'}))
         action('docker', c.ID, act, c.Names);
@@ -194,9 +217,8 @@ function Home() {
     if (await ask({title: `Kill session “${n}”?`, body: 'Every window and process running inside this tmux session will be terminated. Unsaved work in it will be lost.', confirm: 'Kill session', destructive: true}))
       action('tmux', n, 'kill');
   };
-  const AGENT_LABEL: Record<string, string> = {claude: 'Claude Code', codex: 'Codex', ollama: 'Ollama'};
   const agentAction = async (n: string, act: 'start' | 'stop' | 'restart', pid?: number) => {
-    const label = AGENT_LABEL[n] || n;
+    const label = agentTitle(n);
     if (n === 'ollama' && act !== 'start' && !(await ask({title: `${act === 'stop' ? 'Stop' : 'Restart'} the Ollama service?`, body: 'Loaded models are unloaded and in-flight requests fail. Apps that use the Ollama API will be unavailable until it is started again.', confirm: act === 'stop' ? 'Stop Ollama' : 'Restart Ollama', destructive: act === 'stop'}))) return;
     if (n !== 'ollama' && act === 'stop' && !(await ask({
       title: pid ? `Stop ${label} process ${pid}?` : `Stop all ${label} processes?`,
@@ -204,7 +226,7 @@ function Home() {
       confirm: pid ? 'Stop process' : 'Stop all', destructive: true}))) return;
     action('agent', n, act, label, pid);
   };
-  const tmuxPanel = (full?: boolean) => <TmuxPanel d={d} now={now} busy={busy} pending={pending} onOpen={n => action('tmux', n, 'capture')} onCreate={() => setCreating(true)} onKill={killSession} go={full ? undefined : () => setPage('Tmux sessions')} />;
+  const tmuxPanel = (full?: boolean) => <TmuxPanel d={d} now={now} busy={busy} pending={pending} onOpen={n => action('tmux', n, 'capture')} onCreate={() => setCreating(true)} onKill={killSession} go={full ? undefined : () => setPage('ai')} />;
 
   return (
     <SidebarProvider style={{'--sidebar-width': '232px'} as React.CSSProperties}>
@@ -241,8 +263,8 @@ function Home() {
             <span className="avatar">{(d?.user || '·').replace(/[^a-zA-Z0-9]+/g, ' ').trim().split(' ').slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '·'}</span>
             <div><strong>{d?.user || 'Local administrator'}</strong><small>{typeof window !== 'undefined' && window.location.hostname.endsWith('.ts.net') ? 'via Tailscale' : '127.0.0.1 · this machine'}</small></div>
           </div>
-          <div className="version"><button className="version-link" onClick={() => setPage('Hosts')} title="Version and updates">Homebase {d?.version ? `v${d.version}` : ''}</button>{d?.updateAvailable
-            ? <button className="version-update" onClick={() => setPage('Hosts')} title="A newer Homebase is available">UPDATE</button>
+          <div className="version"><button className="version-link" onClick={() => setPage('Host')} title="Version and updates">Homebase {d?.version ? `v${d.version}` : ''}</button>{d?.updateAvailable
+            ? <button className="version-update" onClick={() => setPage('Host')} title="A newer Homebase is available">UPDATE</button>
             : <span>LOCAL</span>}</div>
         </SidebarFooter>
       </Sidebar>
@@ -255,7 +277,7 @@ function Home() {
             <span className="breadcrumb"><span className="hide-sm">{d?.hostname || 'Workspace'}</span><ChevronRight size={13} className="hide-sm" /><strong>{page}</strong></span>
           </div>
           <div className="topbar-right">
-            {d?.updateAvailable && <button className="button small primary topbar-update" onClick={() => { setPage('Hosts'); setUpdateRequest(n => n + 1); }} title="A newer Homebase is available">
+            {d?.updateAvailable && <button className="button small primary topbar-update" onClick={() => { setPage('Host'); setUpdateRequest(n => n + 1); }} title="A newer Homebase is available">
               <Download size={13} /><span className="hide-sm">Update</span></button>}
             <button className="topbar-search" onClick={() => setPalette(true)} aria-label="Open command palette"><Search size={14} /><span>Search</span><kbd>Ctrl K</kbd></button>
             <span className={`connection ${error ? 'offline' : d ? '' : 'pending'}`} title={d ? `Last reading ${clock(d.at, true)}` : undefined}>
@@ -284,7 +306,7 @@ function Home() {
             <button className="button small" onClick={manualRefresh} disabled={refreshing}><RefreshCw size={13} className={refreshing ? 'spin' : ''} /> Retry now</button>
           </div>}
 
-          {(page === 'Overview' || page === 'Hosts') && (
+          {(page === 'Overview' || page === 'Host') && (
             <div className={`host-strip level-${h.level}`}>
               <span className="host-icon"><Server size={22} /></span>
               <div className="host-identity">
@@ -295,30 +317,37 @@ function Home() {
             </div>
           )}
 
+          {tabs.length > 1 && <div className="subtabs segmented" role="tablist" aria-label={`${page} sections`}>
+            {tabs.map(t => <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'selected' : ''} onClick={() => setPage(`${nav.slug}/${t.id}`)}>{t.label}</button>)}
+          </div>}
+
           {page === 'Overview' && <>
             <StatCards d={d} go={setPage} />
             <div className="chart-layout">
               <ActivityPanel d={d} />
               <HealthPanel d={d} error={error} go={setPage} />
             </div>
-            {(has('docker') || has('tmux')) && <div className={`services-grid${has('docker') && has('tmux') ? '' : ' single'}`}>{has('docker') && containersPanel()}{has('tmux') && tmuxPanel()}</div>}
-            {has('ai') && <AiPanel d={d} busy={busy} pending={pending} onAgent={agentAction} />}
             <EventsPanel d={d} now={now} />
           </>}
           {page === 'Resources' && <><StatCards d={d} go={setPage} /><ActivityPanel d={d} /><ProcessesPanel d={d} /><GpuPanel d={d} /></>}
-          {page === 'Hosts' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /><FeaturesPanel features={d?.features} /></>}
           {page === 'Storage' && <StoragePanel d={d} />}
-          {page === 'Containers' && containersPanel(true)}
-          {page === 'Tmux sessions' && tmuxPanel(true)}
-          {page === 'AI services' && <><AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} />{(!d || d.ollamaOnline || d.agents.some(x => x.name === 'ollama' && x.installed)) && <ModelsPanel d={d} />}</>}
-          {page === 'Hosted services' && <PowerPanel mode="services" token={d?.token} />}
-          {page === 'Energy' && <EnergyPanel live={d?.energy} />}
-          {page === 'Sleep & power' && <PowerPanel mode="settings" token={d?.token} />}
           {page === 'Traffic' && <TrafficPanel token={d?.token} />}
+          {page === 'Services' && (tab === 'containers' ? containersPanel(true) : <PowerPanel mode="services" token={d?.token} />)}
+          {page === 'AI & terminals' && <>
+            {has('ai') && <AiPanel d={d} detailed busy={busy} pending={pending} onAgent={agentAction} />}
+            {has('ai') && !!d?.models.length && <ModelsPanel d={d} />}
+            {has('tmux') && tmuxPanel(true)}
+          </>}
+          {page === 'Power' && <>
+            {tab === 'usage' && <EnergyPanel live={d?.energy} />}
+            {tab === 'save' && <><PowerProfilePanel token={d?.token} now={now} /><AdvisorPanel go={setPage} /></>}
+            {tab === 'sleep' && <PowerPanel mode="settings" token={d?.token} />}
+          </>}
+          {page === 'Host' && <><UpdatePanel token={d?.token} now={now} autoStart={updateRequest} /><HostDetails d={d} uptime={uptime} /><FeaturesPanel features={d?.features} /></>}
 
           <footer className="page-footer">
             <span><span className="tiny-dot" /> {error ? 'Readings may be stale' : 'Direct from your machine. No cloud required.'}</span>
-            <span className="hide-sm">Press <kbd>1</kbd>–<kbd>0</kbd> to switch pages · <kbd>R</kbd> to refresh</span>
+            <span className="hide-sm">Press <kbd>1</kbd>–<kbd>{pages.length}</kbd> to switch pages · <kbd>R</kbd> to refresh</span>
           </footer>
         </div>
       </main>
