@@ -15,6 +15,7 @@ import FeaturesPanel from '../src/FeaturesPanel';
 import TrafficPanel from '../src/TrafficPanel';
 import UpdatePanel from '../src/UpdatePanel';
 import StoragePanel from '../src/StoragePanel';
+import MachinePower from '../src/MachinePower';
 import {registerMonitoringTool} from '../src/webmcp';
 import {LogoMark, useStatusFavicon} from '../src/components/logo';
 import {ActivityPanel, AiPanel, ContainersPanel, EventsPanel, GpuPanel, HealthPanel, HostDetails, ModelsPanel, Pill, ProcessesPanel, agentTitle, StatCards, TmuxPanel} from '../src/components/panels';
@@ -314,6 +315,7 @@ function Home() {
                 <small>{d?.platform || 'Discovering system'} <span>·</span> <span className="mono">{d?.interfaces[0]?.address || '127.0.0.1'}</span>{d?.cpuModel && <span className="hide-md"> <span>·</span> {d.cpuModel}</span>}</small>
               </div>
               <UptimeBlock d={d} uptime={uptime} />
+              <MachinePower token={d?.token} hostname={d?.hostname} user={d?.user} />
             </div>
           )}
 

@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -I
-"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads, desktop on/off
-and power profiles."""
+"""Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads, desktop on/off,
+power profiles and password-confirmed reboot / power off."""
 import fcntl
 import json
 import os
@@ -191,6 +191,43 @@ def desktop(action):
             raise ValueError(result.stderr.strip() or ' '.join(args[1:]) + ' failed')
     return 0
 
+MACHINE_ACTIONS = {'reboot': 'reboot', 'poweroff': 'poweroff'}
+CHKPWD = ('/usr/sbin/unix_chkpwd', '/sbin/unix_chkpwd')
+MAX_PASSWORD = 512
+
+def owner_password_ok(password):
+    """Check the owner's own login password with PAM's unix_chkpwd (local /etc/shadow accounts)."""
+    binary = next((b for b in CHKPWD if os.path.isfile(b)), None)
+    if not binary:
+        raise ValueError('Password check is unavailable (unix_chkpwd not found)')
+    name, _ = owner()
+    result = subprocess.run([binary, name, 'nonull'], input=password.encode() + b'\0',
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    return result.returncode == 0
+
+def machine(action):
+    """Reboot or power off, only after the owner's password (read from stdin) checks out.
+
+    The sudo rule needs no password, so the helper itself insists on one: a compromised dashboard process
+    still cannot take the machine down without it. The shutdown starts a few seconds later so the request
+    that asked for it can still be answered."""
+    if action not in MACHINE_ACTIONS:
+        raise ValueError('Unsupported machine action')
+    if os.geteuid() != 0:
+        raise ValueError('Reboot and power off require administrator privileges')
+    raw = sys.stdin.buffer.read(MAX_PASSWORD + 1)
+    if not raw or len(raw) > MAX_PASSWORD or b'\0' in raw:
+        time.sleep(2)
+        raise ValueError('Incorrect password')
+    if not owner_password_ok(raw.decode('utf-8', 'surrogateescape')):
+        time.sleep(2)  # slow down guessing
+        raise ValueError('Incorrect password')
+    result = subprocess.run(['/usr/bin/systemd-run', '--quiet', '--on-active=3', '--timer-property=AccuracySec=100ms',
+                             '/usr/bin/systemctl', MACHINE_ACTIONS[action]], text=True, capture_output=True, timeout=20)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or f'Could not schedule {action}')
+    return 0
+
 DISK_NAME = re.compile(r'(sd[a-z]{1,3}|nvme\d{1,3}n\d{1,3}|vd[a-z]{1,3}|hd[a-z]|mmcblk\d{1,3})\Z')
 SMARTCTL = ('/usr/sbin/smartctl', '/usr/bin/smartctl')
 STANDBY = 99
@@ -349,6 +386,8 @@ def main():
         return control_service(sys.argv[2], sys.argv[3])
     elif command == 'desktop' and len(sys.argv) == 3:
         return desktop(sys.argv[2])
+    elif command == 'machine' and len(sys.argv) == 3:
+        return machine(sys.argv[2])
     elif command == 'profile' and len(sys.argv) == 3:
         print(json.dumps(set_profile(sys.argv[2])))
     elif command == 'smart' and len(sys.argv) == 3:

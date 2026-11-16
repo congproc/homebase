@@ -13,6 +13,7 @@ import {tmuxNew,tmuxKill,serviceAction,startAgent,stopAgent,SESSION_NAME} from '
 import {LAUNCHABLE,agentSnapshot,locateTools} from './agents.mjs';
 import {getPowerProfile,savePowerProfile,startPowerProfiles} from './powerprofile.mjs';
 import {getAdvice} from './advisor.mjs';
+import {getMachine,machineAction} from './machine.mjs';
 import http from 'node:http';
 import os from 'node:os';
 import { readFile, stat, statfs } from 'node:fs/promises';
@@ -116,11 +117,12 @@ const server=http.createServer(async(req,res)=>{
  if(req.method==='GET'&&url.pathname==='/api/profile')return send(res,200,await getPowerProfile());
  if(req.method==='GET'&&url.pathname==='/api/advisor')return send(res,200,await getAdvice());
  if(req.method==='GET'&&url.pathname==='/api/desktop')return send(res,200,await getDesktop());
+ if(req.method==='GET'&&url.pathname==='/api/machine')return send(res,200,await getMachine());
  if(req.method==='GET'&&url.pathname==='/api/alerts'){await checkAlerts();return send(res,200,await getAlerts());}
  if(req.method==='GET'&&url.pathname==='/api/traffic')return send(res,200,await getTraffic(url.searchParams.get('site')||undefined,url.searchParams.get('range')||undefined));
  if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,token,version:VERSION,updateAvailable:updateAvailable(),alertsUnread:await unreadAlerts().catch(()=>0)});
  if(req.method==='GET'&&url.pathname==='/api/update')return send(res,200,await updateStatus());
- if(req.method==='POST'&&['/api/action','/api/power','/api/profile','/api/traffic/control','/api/alerts','/api/update'].includes(url.pathname)){
+ if(req.method==='POST'&&['/api/action','/api/power','/api/profile','/api/traffic/control','/api/alerts','/api/update','/api/machine'].includes(url.pathname)){
  const supplied=Buffer.from(String(req.headers['x-server-token']||''));const expected=Buffer.from(token);if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected))return send(res,403,{error:'Refresh the dashboard and try again'});
  if(!/^application\/json\b/i.test(req.headers['content-type']||''))return send(res,415,{error:'Expected application/json'});
  let body='';for await(const chunk of req){body+=chunk;if(body.length>32768)return send(res,413,{error:'Request too large'});}let payload;try{payload=JSON.parse(body)}catch{return send(res,400,{error:'Invalid JSON'})}
@@ -129,6 +131,7 @@ const server=http.createServer(async(req,res)=>{
   if(payload.action==='apply'){const st=await applyUpdate();record(`Updating Homebase to ${st.job?.version}`);return send(res,200,st);}
   return send(res,400,{error:'Unsupported action'});
  }catch(e){return send(res,400,{error:e.message})}}
+ if(url.pathname==='/api/machine'){try{const out=await machineAction(payload.action,payload.password);record(payload.action==='reboot'?'Machine restart requested':'Machine power off requested');return send(res,200,out)}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/alerts'){try{return send(res,200,await updateAlerts(payload))}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/traffic/control'){try{const c=await updateControl(payload);const {action,sid,ip}=payload;record(`traffic: ${action} ${sid||ip}`);return send(res,200,c)}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/profile'){try{const p=await savePowerProfile(payload);record(`Power profile: ${p.settings.mode}`);return send(res,200,p)}catch(e){return send(res,400,{error:e.message})}}

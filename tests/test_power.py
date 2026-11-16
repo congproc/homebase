@@ -233,6 +233,54 @@ class DesktopTest(unittest.TestCase):
             power.desktop('on')
 
 
+class MachineTest(unittest.TestCase):
+    ok = SimpleNamespace(returncode=0, stderr='')
+
+    def call(self, action, stdin=b'secret', checked=True, euid=0):
+        with patch.object(power.os, 'geteuid', return_value=euid), \
+             patch.object(power.sys, 'stdin', SimpleNamespace(buffer=SimpleNamespace(read=lambda n: stdin[:n]))), \
+             patch.object(power, 'owner_password_ok', return_value=checked) as check, \
+             patch.object(power.time, 'sleep'), \
+             patch.object(power.subprocess, 'run', return_value=self.ok) as run:
+            return power.machine(action), check, run
+
+    def test_rejects_unknown_actions_and_non_root(self):
+        for action in ('', 'halt', 'reboot;id', 'REBOOT'):
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                self.call(action)
+        with self.assertRaises(ValueError):
+            self.call('reboot', euid=1000)
+
+    def test_wrong_or_missing_password_never_shuts_down(self):
+        for stdin, checked in ((b'nope', False), (b'', True), (b'a\0b', True), (b'x' * 600, True)):
+            with self.subTest(stdin=stdin[:8]):
+                with patch.object(power.subprocess, 'run') as run, patch.object(power.time, 'sleep'), \
+                     patch.object(power.os, 'geteuid', return_value=0), \
+                     patch.object(power.sys, 'stdin', SimpleNamespace(buffer=SimpleNamespace(read=lambda n, s=stdin: s[:n]))), \
+                     patch.object(power, 'owner_password_ok', return_value=checked), \
+                     self.assertRaisesRegex(ValueError, 'Incorrect password'):
+                    power.machine('reboot')
+                run.assert_not_called()
+
+    def test_correct_password_schedules_the_action(self):
+        for action in ('reboot', 'poweroff'):
+            with self.subTest(action=action):
+                code, check, run = self.call(action)
+                self.assertEqual(code, 0)
+                check.assert_called_once_with('secret')
+                args = run.call_args[0][0]
+                self.assertEqual(args[0], '/usr/bin/systemd-run')
+                self.assertEqual(args[-2:], ['/usr/bin/systemctl', action])
+
+    def test_password_goes_to_unix_chkpwd_on_stdin_for_the_owner(self):
+        with patch.object(power, 'owner', return_value=('alice', 1000)), \
+             patch.object(power.os.path, 'isfile', return_value=True), \
+             patch.object(power.subprocess, 'run', return_value=SimpleNamespace(returncode=7)) as run:
+            self.assertFalse(power.owner_password_ok('pw'))
+        self.assertEqual(run.call_args[0][0][1:], ['alice', 'nonull'])
+        self.assertEqual(run.call_args[1]['input'], b'pw\0')
+
+
 class SudoersTest(unittest.TestCase):
     def test_desktop_rule_allows_only_on_and_off(self):
         loader = importlib.machinery.SourceFileLoader('installer', str(pathlib.Path(__file__).resolve().parents[1] / 'system/install-power.py'))
@@ -242,3 +290,12 @@ class SudoersTest(unittest.TestCase):
         rules = [l for l in installer.sudoers_for('alice').splitlines() if 'desktop' in l and not l.startswith('#')]
         self.assertEqual(rules, ['alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop on',
                                  'alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power desktop off'])
+
+    def test_machine_rule_allows_only_reboot_and_poweroff(self):
+        loader = importlib.machinery.SourceFileLoader('installer', str(pathlib.Path(__file__).resolve().parents[1] / 'system/install-power.py'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        installer = importlib.util.module_from_spec(spec)
+        loader.exec_module(installer)
+        rules = [l for l in installer.sudoers_for('alice').splitlines() if 'machine' in l and not l.startswith('#')]
+        self.assertEqual(rules, ['alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power machine reboot',
+                                 'alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power machine poweroff'])

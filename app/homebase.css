@@ -283,6 +283,23 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
 .host-uptime small { font-size: 11.5px; color: var(--text-3); display: block; margin-bottom: 2px; }
 .host-uptime strong { font-size: 13px; color: #d1d7ca; font-weight: 500; }
 .host-uptime > svg { align-self: flex-start; margin-top: 2px; }
+.host-identity { flex: 1 1 220px; }
+.machine-power { display: flex; align-items: center; gap: 6px; padding-left: 14px; border-left: 1px solid var(--line); }
+.machine-power .button { white-space: nowrap; }
+.machine-setup span { color: var(--text-3); }
+/* Not enough room for identity + uptime + buttons on one line: buttons get their own row, right-aligned. */
+@media (max-width: 1180px) {
+  .host-strip { flex-wrap: wrap; row-gap: 12px; }
+  .machine-power { width: 100%; justify-content: flex-end; border-left: 0; padding: 12px 0 0; border-top: 1px solid var(--line-soft); }
+}
+@media (max-width: 900px) {
+  .host-uptime { margin-left: 0; border-left: 0; padding-left: 0; width: 100%; }
+}
+@media (pointer: coarse) {
+  .machine-power .button, .dialog-actions .button { min-height: 44px; }
+  #machine-password { font-size: 16px; }
+}
+.form-help.form-error { color: var(--red); }
 .awake-bar { height: 5px; width: 190px; border-radius: 3px; background: #4a3f6b; overflow: hidden; margin-top: 6px; }
 .awake-bar span { display: block; height: 100%; background: var(--lime); border-radius: 3px; }
 .awake-legend { display: flex; gap: 12px; margin-top: 5px; font-size: 11px; color: var(--text-3); }
@@ -739,6 +756,9 @@ h1 { font-size: 28px; font-weight: 600; letter-spacing: -.8px; line-height: 1.2;
   .page-heading .button span { display: none; }
   .page-heading .button { padding: 9px; }
   .host-strip { padding: 14px; flex-wrap: wrap; }
+  .machine-power .button:not(.machine-setup) { flex: 1; justify-content: center; }
+  .machine-power { flex-wrap: wrap; }
+  .machine-setup { order: 3; width: 100%; justify-content: center; }
   .host-uptime { margin-left: 0; border-left: 0; padding-left: 0; width: 100%; }
   .stats { gap: 8px; }
   .gpu-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 14px; }
