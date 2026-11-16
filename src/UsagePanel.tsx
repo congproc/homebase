@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {AlertTriangle, ArrowRight, Check, CheckCheck, ChevronRight, Copy, FolderOpen, FolderSearch, ListChecks, Lock, RefreshCw, Square, Trash2, X} from 'lucide-react';
+import {AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpToLine, Check, CheckCheck, ChevronRight, Copy, FolderOpen, FolderSearch, Info, ListChecks, Lock, RefreshCw, Square, Trash2, X} from 'lucide-react';
 import {toast} from 'sonner';
 import {Panel, Empty} from './components/panels';
 import {ago, bytes, levelColor, levelFor, since} from './lib/format';
@@ -85,6 +85,16 @@ function tiles(node: UNode): UNode[] {
   return keep;
 }
 
+type SortKey = 'name' | 'size' | 'files' | 'newest';
+type Sort = {key: SortKey; dir: 1 | -1};
+/** Rows in list order: named entries by the chosen column; the synthetic "smaller files/items" rows always last. */
+function sortRows(ch: UNode[], {key, dir}: Sort) {
+  const named = ch.filter(c => c.n), rest = ch.filter(c => !c.n);
+  const val = (c: UNode) => key === 'name' ? c.n.toLowerCase() : key === 'size' ? c.d : key === 'files' ? c.f : c.m;
+  named.sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir || b.d - a.d; });
+  return [...named, ...rest];
+}
+
 /** How a click selects: replace (plain), toggle one (Ctrl/Cmd, or select mode), or a range in list order (Shift). */
 type How = {add?: boolean; range?: boolean};
 type Pick = (rel: string[], how?: How) => void;
@@ -92,7 +102,8 @@ type Pick = (rel: string[], how?: How) => void;
 type Menu = (e: React.MouseEvent | React.KeyboardEvent, key: string) => void;
 const howOf = (e: React.MouseEvent | React.KeyboardEvent): How => ({add: e.ctrlKey || e.metaKey, range: e.shiftKey});
 /** Click selects (details below), Ctrl/Cmd-click adds, double-click opens a folder. */
-function Treemap({node, mode, now, cats, selected, select, open, menu}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick; menu: Menu}) {
+function Treemap({node, mode, now, cats, selected, select, open, menu, hover, setHover}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick; menu: Menu;
+  hover: string | null; setHover: (key: string | null) => void}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({w: 0, h: 0});
   useLayoutEffect(() => {
@@ -100,23 +111,29 @@ function Treemap({node, mode, now, cats, selected, select, open, menu}: {node: U
     const ro = new ResizeObserver(([e]) => setSize({w: e.contentRect.width, h: e.contentRect.height}));
     ro.observe(el); return () => ro.disconnect();
   }, []);
-  const top = useMemo(() => tiles(node), [node]);
-  const rects = useMemo(() => squarify(top.map(c => c.d), {x: 0, y: 0, w: size.w, h: size.h}), [top, size]);
-  const HEAD = 18, PAD = 2;
-  return <div className="treemap" ref={ref} role="list" aria-label="Disk usage treemap">
-    {size.w > 0 && top.map((c, i) => {
-      const r = rects[i], drill = c.k === 'dir', pickable = !!c.n;
-      const nestable = drill && c.ch?.length && r.w > 70 && r.h > 46;
+  // The whole layout, nested tiles included, only changes with the data or the size: not on hover or selection.
+  const layout = useMemo(() => {
+    const HEAD = 18, PAD = 2, top = tiles(node);
+    const rects = squarify(top.map(c => c.d), {x: 0, y: 0, w: size.w, h: size.h});
+    return top.map((c, i) => {
+      const r = rects[i], nestable = c.k === 'dir' && !!c.ch?.length && r.w > 70 && r.h > 46;
       const inner = nestable ? tiles(c) : [];
       const innerRects = nestable ? squarify(inner.map(g => g.d), {x: PAD, y: HEAD, w: r.w - PAD * 2, h: r.h - HEAD - PAD}) : [];
+      return {c, r, nestable, inner, innerRects};
+    });
+  }, [node, size]);
+  const leave = () => setHover(null);
+  return <div className="treemap" ref={ref} role="list" aria-label="Disk usage treemap" onMouseLeave={leave}>
+    {size.w > 0 && layout.map(({c, r, nestable, inner, innerRects}, i) => {
+      const drill = c.k === 'dir', pickable = !!c.n;
       const showLabel = r.w > 46 && r.h > 18;
-      return <div key={c.k + c.n + i} role="listitem" className={`tm-tile kind-${c.k}${pickable ? ' pick' : ''}${nestable ? ' nested' : ''}${pickable && selected.has(c.n) ? ' selected' : ''}`}
+      return <div key={c.k + c.n + i} role="listitem" className={`tm-tile kind-${c.k}${pickable ? ' pick' : ''}${nestable ? ' nested' : ''}${pickable && selected.has(c.n) ? ' selected' : ''}${pickable && hover === c.n ? ' hovered' : ''}`}
         style={{left: r.x, top: r.y, width: r.w, height: r.h, ...(nestable ? {} : {background: colorOf(c, mode, now, cats), color: ink(c, mode, now)})}}
-        title={tip(c, node.d, now, cats)} onClick={pickable ? e => select([c.n], howOf(e)) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined} onContextMenu={pickable ? e => menu(e, c.n) : undefined}>
+        aria-label={tip(c, node.d, now, cats).split('\n').slice(0, 2).join(', ')} onMouseEnter={() => setHover(pickable ? c.n : null)} onClick={pickable ? e => select([c.n], howOf(e)) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined} onContextMenu={pickable ? e => menu(e, c.n) : undefined}>
         {showLabel && <span className="tm-label"><strong>{c.k === 'locked' && <Lock size={10} />}{label(c)}</strong>{r.h > 34 && !nestable && <small>{bytes(c.d)}</small>}{nestable && <small>{bytes(c.d)}</small>}</span>}
         {inner.map((g, j) => { const q = innerRects[j]; const gd = g.k === 'dir', gp = !!g.n;
-          return <div key={g.k + g.n + j} className={`tm-tile inner kind-${g.k}${gp ? ' pick' : ''}${gp && selected.has(c.n + '/' + g.n) ? ' selected' : ''}`} style={{left: q.x, top: q.y, width: q.w, height: q.h, background: colorOf(g, mode, now, cats), color: ink(g, mode, now)}}
-            title={`${c.n}/${tip(g, c.d, now, cats)}`} onClick={e => { e.stopPropagation(); const h = howOf(e); select(gp ? [c.n, g.n] : [c.n], {add: h.add || h.range}); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }} onContextMenu={e => { e.stopPropagation(); menu(e, gp ? `${c.n}/${g.n}` : c.n); }}>
+          return <div key={g.k + g.n + j} className={`tm-tile inner kind-${g.k}${gp ? ' pick' : ''}${gp && selected.has(c.n + '/' + g.n) ? ' selected' : ''}${gp && hover === c.n + '/' + g.n ? ' hovered' : ''}`} style={{left: q.x, top: q.y, width: q.w, height: q.h, background: colorOf(g, mode, now, cats), color: ink(g, mode, now)}}
+            onMouseEnter={e => { e.stopPropagation(); setHover(gp ? `${c.n}/${g.n}` : c.n); }} onMouseLeave={() => setHover(c.n)} onClick={e => { e.stopPropagation(); const h = howOf(e); select(gp ? [c.n, g.n] : [c.n], {add: h.add || h.range}); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }} onContextMenu={e => { e.stopPropagation(); menu(e, gp ? `${c.n}/${g.n}` : c.n); }}>
             {q.w > 46 && q.h > 16 && <span className="tm-label"><strong>{label(g)}</strong>{q.h > 30 && <small>{bytes(g.d)}</small>}</span>}
           </div>; })}
       </div>;
@@ -138,6 +155,12 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const [selectMode, setSelectMode] = useState(false);
   const [batch, setBatch] = useState<string[] | null>(null);
   const [menu, setMenu] = useState<{x: number; y: number; keys: string[]; from: HTMLElement | null} | null>(null);
+  const [hover, setHover] = useState<string | null>(null);
+  const [sort, setSort] = useState<Sort>({key: 'size', dir: -1});
+  // Narrow panel = details sit below the list (container query in CSS); a single pick then gets the selection bar.
+  const [narrow, setNarrow] = useState(false);
+  // After opening or leaving a folder by keyboard, which row to focus once the new listing arrives.
+  const focusNext = useRef<string | 'first' | null>(null);
   // Selection keys are listened for on the document (see onKeys); the ref always holds this render's handler.
   const keysRef = useRef<(e: KeyboardEvent) => void>(() => {});
   useEffect(() => {
@@ -150,6 +173,11 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = panelRef.current; if (!el) return;
+    const ro = new ResizeObserver(([e]) => setNarrow(e.contentRect.width < 860));
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
 
   const refresh = useCallback(async () => {
     try { const r = await fetch('/api/storage'); if (r.ok) { const v = await r.json() as {mounts: MountInfo[]}; setMounts(v.mounts); setMount(m => m && v.mounts.some(x => x.mount === m) ? m : v.mounts[0]?.mount ?? null); } } catch { /* next poll */ }
@@ -169,6 +197,24 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [mount, path, scannedAt, version]);
+
+  // A new folder: bring its map into view when you opened it from far down the list, and put keyboard focus where the
+  // keyboard user expects it (the first row, or the folder you just came back from).
+  const shownPath = tree?.path;
+  useEffect(() => {
+    if (!shownPath) return;
+    const bar = panelRef.current?.querySelector<HTMLElement>('.usage-toolbar');
+    const r = bar?.getBoundingClientRect();
+    if (r && (r.top < 60 || r.top > window.innerHeight * 0.6)) bar!.scrollIntoView({behavior: 'smooth', block: 'start'});
+    const want = focusNext.current;
+    if (!want) return;
+    focusNext.current = null;
+    requestAnimationFrame(() => {
+      const rows = panelRef.current?.querySelectorAll<HTMLElement>('.usage-row.pick');
+      const row = want === 'first' ? rows?.[0] : [...(rows ?? [])].find(x => x.dataset.key === want);
+      row?.focus({preventScroll: true});
+    });
+  }, [shownPath]);
 
   async function act(action: 'scan' | 'cancel') {
     if (!mount || !token) return;
@@ -190,7 +236,8 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const pickedSet = new Set(picked);
   const rel = cur?.focus ? cur.focus.split('/') : [];
   const node = tree?.node, cats = tree?.categories;
-  const order = (node?.ch || []).filter(c => c.n).map(c => c.n);
+  const sorted = useMemo(() => sortRows(node?.ch || [], sort), [node, sort]);
+  const order = sorted.filter(c => c.n).map(c => c.n);
   const select = (r: string[], how: How = {}) => {
     const key = r.join('/'), p = cur ?? {at: here, items: [], focus: null, anchor: null};
     let next: typeof sel;
@@ -208,14 +255,34 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
         next = {...p, items: [...p.items.filter(x => !x.startsWith(key + '/')), key], focus: key, anchor: key};
       }
     } else {
-      next = p.items.length === 1 && p.items[0] === key ? null : {at: here, items: [key], focus: key, anchor: key};
+      // Like a file manager: a plain click selects, it never unselects (Esc, Clear or a click on blank space does).
+      next = {at: here, items: [key], focus: key, anchor: key};
     }
     setSel(next);
-    // On touch screens the details sit below the list (see .usage-main in CSS): bring them into view for a single
-    // pick. Not with a mouse, where moving the page between the two clicks of a double-click would open the wrong folder.
-    if (next?.items.length === 1 && !selectMode && window.matchMedia('(max-width: 1180px) and (pointer: coarse)').matches)
-      requestAnimationFrame(() => panelRef.current?.querySelector('.usage-detail')?.scrollIntoView({behavior: 'smooth', block: 'start'}));
   };
+  /** Arrow keys in the list: move (and select), Shift extends from the anchor, Ctrl/Cmd only moves the focus. */
+  const move = (from: string | null, step: number | 'home' | 'end', how: {range?: boolean; only?: boolean}) => {
+    if (!order.length) return;
+    const i = from ? order.indexOf(from) : -1;
+    const j = step === 'home' ? 0 : step === 'end' ? order.length - 1 : Math.max(0, Math.min(order.length - 1, (i < 0 ? (step > 0 ? -1 : order.length) : i) + step));
+    const key = order[j];
+    if (!how.only) select([key], {range: how.range});
+    focusRow(key);
+  };
+  const focusRow = (key: string) => requestAnimationFrame(() => {
+    const row = panelRef.current?.querySelector<HTMLElement>(`.usage-row[data-key="${CSS.escape(key)}"]`);
+    row?.focus({preventScroll: true});
+    row?.scrollIntoView({block: 'nearest'});
+  });
+  /** Up one folder; the folder you came from is selected and focused there, as in a file manager. */
+  const goUp = () => {
+    if (!parts.length) return;
+    const from = parts.at(-1)!, parent = '/' + parts.slice(0, -1).join('/');
+    setSel({at: `${mount}:${parent}`, items: [from], focus: from, anchor: from});
+    focusNext.current = from;
+    setPath(parent);
+  };
+  const openByKey = (r: string[]) => { focusNext.current = 'first'; open(r); };
   const selectAll = () => order.length && setSel({at: here, items: order, focus: order.at(-1)!, anchor: order[0]});
   const clear = () => { setSel(null); setSelectMode(false); };
   const sizeOf = (key: string) => node ? findRel(node, key.split('/'))?.d ?? 0 : 0;
@@ -248,6 +315,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
     if (e.key === 'Escape' && (picked.length || selectMode)) { e.preventDefault(); clear(); }
     else if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && picked.length && token && view === 'map') { e.preventDefault(); setBatch(picked.map(fromMount)); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view === 'map' && order.length) { e.preventDefault(); selectAll(); }
+    else if (((e.key === 'Backspace' && !e.metaKey && !e.ctrlKey) || (e.altKey && e.key === 'ArrowUp')) && view === 'map' && parts.length) { e.preventDefault(); goUp(); }
   };
   useLayoutEffect(() => { keysRef.current = onKeys; });
   /** From the cleanup list: open the item's folder in the map and select the item. */
@@ -271,7 +339,12 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   </div>;
 
   return <Panel title="Disk usage" sub={sub} action={action} className="usage-panel">
-    <div className="usage-body" ref={panelRef}>
+    <div className="usage-body" ref={panelRef} onClick={e => {
+      // A click on blank space in the panel (not on an item, button or the details) clears the selection.
+      const t = e.target as HTMLElement;
+      if (cur && !selectMode && !t.closest('button, a, input, .usage-row, .tm-tile, .usage-detail, .selection-bar, .item-menu, [role=dialog]')
+        && t.closest('.usage-body, .usage-summary, .usage-legend, .usage-listbar, .usage-toolbar') ) setSel(null);
+    }}>
       {mounts && mounts.length > 1 && <div className="usage-mounts" role="tablist">{mounts.map(m => {
         const pct = m.total ? Math.round((m.used ?? 0) / m.total * 100) : null, l = levelFor(pct ?? 0, 80, 92);
         return <button key={m.mount} role="tab" aria-selected={m.mount === mount} className={m.mount === mount ? 'selected' : ''} onClick={() => { if (m.mount === mount) { setPath('/'); return; } setMount(m.mount); setPath('/'); setTree(null); }}>
@@ -307,6 +380,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
       {view === 'map' && node && <>
         <div className="usage-toolbar">
           <nav className="usage-crumbs" aria-label="Folder">
+            <button className="crumb-up" onClick={goUp} disabled={!parts.length} aria-label="Up one folder" title="Up one folder (Backspace)"><ArrowUpToLine size={13} /></button>
             <button onClick={() => go([])} className={parts.length ? '' : 'here'}>{mount}</button>
             {parts.map((p, i) => <span key={i}><ChevronRight size={12} /><button className={i === parts.length - 1 ? 'here' : ''} onClick={() => go(parts.slice(0, i + 1))}>{p}</button></span>)}
           </nav>
@@ -322,13 +396,15 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
         </div>
         <div className="usage-main">
           <div className={`usage-map${loading ? ' loading' : ''}`} aria-busy={loading}>
-            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={pickedSet} select={select} open={open} menu={openMenu} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
+            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={pickedSet} select={select} open={open} menu={openMenu} hover={hover} setHover={setHover} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
             <div className="usage-legend">
               {mode === 'age' ? <><span className="dim">Newest change:</span>{AGES.map(([, text, pct]) => <span key={text}><i style={{background: `color-mix(in srgb, var(--amber) ${pct}, var(--surface-2, #1b1c20))`}} />{text}</span>)}</>
                 : mode === 'growth' ? (tree?.meta?.previous ? GROWTH.slice(0, 5).map(([text, color]) => <span key={text}><i style={{background: color}} />{text}</span>) : <span className="dim">Rescan later to compare: growth is measured against the previous scan.</span>)
                 : mode === 'category' ? Object.entries(VERDICTS).map(([k, [text, color]]) => <span key={k}><i style={{background: color}} />{text}</span>)
                 : ['dir', 'file', 'files', 'locked', 'mount'].map(k => <span key={k}><i style={{background: TYPES[k][1]}} />{TYPES[k][0]}</span>)}
-              <span className="dim usage-hint">Area is space on disk. Select for details; double-click a folder, or use →, to open it.</span>
+              {(() => { const h = hover ? findRel(node, hover.split('/')) : null;
+                return h ? <span className="usage-hover" aria-live="off"><span className="mono">{hover}{h.k === 'dir' ? '/' : ''}</span> {bytes(h.d)} · {node.d ? `${(h.d / node.d * 100).toFixed(1)}%` : ''}{h.f > 1 ? ` · ${h.f.toLocaleString()} files` : ''}{h.m ? ` · ${age(h.m, now)}` : ''}{h.t && cats?.[h.t] ? ` · ${cats[h.t].label}` : ''}</span>
+                  : <span className="dim usage-hint">Area is space on disk. Select for details; double-click a folder, or use →, to open it.</span>; })()}
             </div>
           </div>
           {mount && (picked.length > 1
@@ -344,8 +420,9 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
             : <><button className="button small" onClick={() => setSelectMode(true)}><ListChecks size={12} />Select</button>
               <span className="dim usage-keys">Ctrl-click to add, Shift-click for a range, Ctrl+A for all, Esc to clear.</span></>}
         </div>
-        <UsageList node={node} now={now} cats={cats} selected={pickedSet} select={select} open={open} checks={selectMode || picked.length > 1}
-          longPress={k => { setSelectMode(true); select([k], {add: true}); }} menu={openMenu} />
+        <UsageList node={node} rows={sorted} now={now} cats={cats} selected={pickedSet} select={select} open={openByKey} checks={selectMode || picked.length > 1}
+          longPress={k => { setSelectMode(true); select([k], {add: true}); }} menu={openMenu} hover={hover} setHover={setHover} sort={sort} setSort={setSort}
+          move={move} clear={() => picked.length && !selectMode && setSel(null)} />
         {menu && <ItemMenu at={menu} count={menu.keys.length} close={() => { const f = menu.from; setMenu(null); f?.focus?.(); }} items={[
           ...(menu.keys.length === 1 && findRel(node, menu.keys[0].split('/'))?.k === 'dir' ? [{icon: FolderOpen, label: 'Open', run: () => open(menu.keys[0].split('/'))}] : []),
           {icon: Copy, label: menu.keys.length === 1 ? 'Copy path' : `Copy ${menu.keys.length} paths`, run: () => navigator.clipboard.writeText(menu.keys.map(absolute).join('\n'))
@@ -353,14 +430,21 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
           {icon: CheckCheck, label: 'Select all', run: selectAll},
           ...(token ? [{icon: Trash2, label: menu.keys.length === 1 ? 'Delete…' : `Delete ${menu.keys.length} items…`, danger: true, run: () => setBatch(menu.keys.map(fromMount))}] : []),
         ]} />}
-        {(picked.length > 1 || selectMode) && <div className="selection-bar" role="region" aria-label="Selection">
-          <strong>{picked.length} selected</strong><span className="dim">{bytes(pickedBytes)}</span>
+        {(picked.length > 1 || selectMode || (narrow && picked.length === 1)) && <div className="selection-bar" role="region" aria-label="Selection">
+          {picked.length === 1 && !selectMode
+            ? <><strong className="mono sb-name" title={picked[0]}>{picked[0].split('/').pop()}</strong><span className="dim">{bytes(pickedBytes)}</span></>
+            : <><strong>{picked.length} selected</strong><span className="dim">{bytes(pickedBytes)}</span></>}
           <span className="spacer" />
-          <button className="button small" onClick={clear}><X size={12} />Clear</button>
+          {picked.length === 1 && !selectMode && <>
+            {findRel(node, picked[0].split('/'))?.k === 'dir' && <button className="button small" onClick={() => open(picked[0].split('/'))} aria-label="Open" title="Open"><FolderOpen size={12} /><span className="bl">Open</span></button>}
+            <button className="button small" onClick={() => panelRef.current?.querySelector('.usage-detail')?.scrollIntoView({behavior: 'smooth', block: 'start'})} aria-label="Details" title="Details"><Info size={12} /><span className="bl">Details</span></button>
+          </>}
+          <button className="button small" onClick={clear} aria-label="Clear selection" title="Clear selection (Esc)"><X size={12} /><span className="bl">Clear</span></button>
           <button className="button small danger-outline" disabled={!picked.length || !token} onClick={() => setBatch(picked.map(fromMount))}><Trash2 size={12} />Delete…</button>
         </div>}
-        {batch && token && mount && <DeleteDialog mount={mount} paths={batch} token={token} user={user} now={now} onClose={() => setBatch(null)}
-          onDone={r => { setBatch(null); announceDelete(r, batch.length === 1 ? batch[0].split('/').pop()! : `${batch.length} items`); clear(); setVersion(v => v + 1); }} />}
+        {batch && token && mount && <DeleteDialog mount={mount} paths={batch} token={token} user={user} now={now}
+          onClose={() => { setBatch(null); const f = cur?.focus; if (f) focusRow(f); }}
+          onDone={r => { setBatch(null); announceDelete(r, batch.length === 1 ? batch[0].split('/').pop()! : `${batch.length} items`); clear(); focusNext.current = 'first'; setVersion(v => v + 1); }} />}
       </>}
     </div>
   </Panel>;
@@ -378,10 +462,13 @@ function forecastText(s?: Space | null) {
 const findRel = (node: UNode, rel: string[]) => rel.reduce<UNode | undefined>((n, p) => n?.ch?.find(c => c.n === p), node);
 
 /** The same data as a list: readable on phones, keyboard friendly, and shows the numbers the treemap only implies. */
-function UsageList({node, now, cats, selected, select, open, checks, longPress, menu}: {node: UNode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick;
-  checks: boolean; longPress: (name: string) => void; menu: Menu}) {
-  const rows = (node.ch || []).slice(0, 60);
-  const max = rows[0]?.d || 1;
+function UsageList({node, rows: all, now, cats, selected, select, open, checks, longPress, menu, hover, setHover, sort, setSort, move, clear}: {node: UNode; rows: UNode[]; now: number;
+  cats?: Categories; selected: Set<string>; select: Pick; open: Pick; checks: boolean; longPress: (name: string) => void; menu: Menu;
+  hover: string | null; setHover: (key: string | null) => void; sort: Sort; setSort: (s: Sort) => void;
+  move: (from: string | null, step: number | 'home' | 'end', how: {range?: boolean; only?: boolean}) => void; clear: () => void}) {
+  const [limit, setLimit] = useState(60);
+  const rows = all.slice(0, limit);
+  const max = Math.max(1, ...all.map(c => c.d));
   // Long-press (touch) starts selecting several; the click that follows the press must not also toggle.
   const press = useRef<{timer?: ReturnType<typeof setTimeout>; fired?: boolean}>({});
   const startPress = (e: React.PointerEvent, name: string) => {
@@ -390,24 +477,43 @@ function UsageList({node, now, cats, selected, select, open, checks, longPress, 
     press.current.timer = setTimeout(() => { press.current.fired = true; navigator.vibrate?.(15); longPress(name); }, 500);
   };
   const endPress = () => clearTimeout(press.current.timer);
-  return <div className={`usage-list${checks ? ' checking' : ''}`} role="table" aria-label="Largest items" aria-multiselectable="true">
-    <div className="usage-row head" role="row"><span>Name</span><span>Size</span><span>Share</span><span>Files</span><span>Newest change</span><span /></div>
+  /** Rows are a single tab stop's worth of keys: arrows, Home/End, Enter opens, Space toggles, menu keys. */
+  const onRowKey = (e: React.KeyboardEvent, c: UNode) => {
+    const how = {range: e.shiftKey, only: e.ctrlKey || e.metaKey};
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menu(e, c.n);
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(c.n, e.key === 'ArrowDown' ? 1 : -1, how); }
+    else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); move(c.n, e.key === 'Home' ? 'home' : 'end', how); }
+    else if (e.key === 'Enter' && c.k === 'dir' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); open([c.n]); }
+    else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select([c.n], {add: e.key === ' ' || e.ctrlKey || e.metaKey, range: e.shiftKey}); }
+  };
+  const head = (key: SortKey, text: string) => <span role="columnheader" aria-sort={sort.key === key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none'}>
+    <button className={`sort${sort.key === key ? ' on' : ''}`} onClick={() => setSort(sort.key === key ? {key, dir: (sort.dir * -1) as 1 | -1} : {key, dir: key === 'name' ? 1 : -1})}>
+      {text}{sort.key === key && (sort.dir > 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+    </button>
+  </span>;
+  return <div className={`usage-list${checks ? ' checking' : ''}`} role="table" aria-label="Largest items" aria-multiselectable="true"
+    onClick={e => { if (e.target === e.currentTarget) clear(); }} onMouseLeave={() => setHover(null)}>
+    <div className="usage-row head" role="row">{head('name', 'Name')}{head('size', 'Size')}<span role="columnheader">Share</span>{head('files', 'Files')}{head('newest', 'Newest change')}<span /></div>
     {rows.map((c, i) => {
       const drill = c.k === 'dir', pickable = !!c.n, cat = c.t ? cats?.[c.t] : undefined, on = pickable && selected.has(c.n);
-      return <div key={c.k + c.n + i} role="row" aria-selected={pickable ? on : undefined} className={`usage-row kind-${c.k}${pickable ? ' pick' : ''}${on ? ' selected' : ''}`} tabIndex={pickable ? 0 : undefined} title={tip(c, node.d, now, cats)}
+      return <div key={c.k + c.n + i} role="row" data-key={pickable ? c.n : undefined} aria-selected={pickable ? on : undefined}
+        className={`usage-row kind-${c.k}${pickable ? ' pick' : ''}${on ? ' selected' : ''}${pickable && (hover === c.n || hover?.startsWith(c.n + '/')) ? ' hovered' : ''}`} tabIndex={pickable ? 0 : undefined}
+        onMouseEnter={() => setHover(pickable ? c.n : null)}
         onClick={pickable ? e => { if (press.current.fired) { press.current.fired = false; return; } select([c.n], howOf(e)); } : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}
         onPointerDown={pickable ? e => startPress(e, c.n) : undefined} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress} onContextMenu={pickable ? e => menu(e, c.n) : undefined}
-        onKeyDown={pickable ? e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menu(e, c.n); else if (e.key === 'Enter' && drill && !e.shiftKey && !e.ctrlKey && !e.metaKey) open([c.n]); else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select([c.n], howOf(e)); } } : undefined}>
+        onKeyDown={pickable ? e => onRowKey(e, c) : undefined}>
         <span className="name">{checks && <span className={`row-check${on ? ' on' : ''}`} aria-hidden="true">{on && <Check size={11} />}</span>}<i style={{background: TYPES[c.k]?.[1]}} />{c.k === 'locked' && <Lock size={11} />}<span className={c.n ? 'mono' : 'dim'}>{label(c)}{drill ? '/' : ''}</span>
           {cat && <small className="usage-cat" style={{color: VERDICTS[cat.verdict][1]}}>{cat.label}</small>}{c.h && <small className="dim">hardlink</small>}</span>
         <span>{bytes(c.d)}</span>
         <span className="share"><span className="meter small"><span style={{width: `${Math.max(1, c.d / max * 100)}%`}} /></span>{node.d ? `${(c.d / node.d * 100).toFixed(1)}%` : ''}</span>
         <span>{c.f ? c.f.toLocaleString() : '—'}</span>
         <span title={c.m ? new Date(c.m).toLocaleString() : undefined}>{age(c.m, now)}</span>
-        <span className="open">{drill && <button className="icon-button" aria-label={`Open ${c.n}`} onClick={e => { e.stopPropagation(); open([c.n]); }}><ArrowRight size={13} /></button>}</span>
+        <span className="open">{drill && <button className="icon-button" aria-label={`Open ${c.n}`} tabIndex={-1} onClick={e => { e.stopPropagation(); open([c.n]); }}><ArrowRight size={13} /></button>}</span>
       </div>;
     })}
-    {(node.c ?? 0) > rows.length && <div className="usage-row more dim" role="row"><span>Showing the largest {rows.length} of {node.c?.toLocaleString()} items</span></div>}
+    {all.length > rows.length && <div className="usage-row more" role="row"><button className="button small" onClick={() => setLimit(all.length)}>Show all {all.length.toLocaleString()} loaded items</button></div>}
+    {(() => { const folded = all.find(c => c.k === 'more');
+      return folded ? <div className="usage-row more dim" role="row"><span>Only the largest {all.filter(c => c.n).length} are listed one by one; {folded.x?.toLocaleString()} smaller entries ({bytes(folded.d)}) are combined in the last row.</span></div> : null; })()}
   </div>;
 }
 

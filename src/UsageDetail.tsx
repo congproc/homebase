@@ -44,25 +44,31 @@ export default function UsageDetail({mount, path, parentSize, now, scannedAt, on
   const [state, setState] = useState<{key: string; item?: Item; error?: string} | null>(null);
   const [deleting, setDeleting] = useState(false);
   const key = `${mount}:${path}:${scannedAt}`;
+  // Moving through items with the arrow keys changes the path many times a second: wait a moment before asking the
+  // server (each look walks /proc and asks dpkg), and cancel a request that is no longer wanted.
   useEffect(() => {
-    let live = true;
-    fetch(`/api/storage/item?mount=${encodeURIComponent(mount)}&path=${encodeURIComponent(path)}`)
-      .then(async r => { const v = await r.json(); if (!r.ok) throw Error(v.error); return v as Item; })
-      .then(item => { if (live) setState({key, item}); }, e => { if (live) setState({key, error: (e as Error).message}); });
-    return () => { live = false; };
+    const ctl = new AbortController();
+    const t = setTimeout(() => {
+      fetch(`/api/storage/item?mount=${encodeURIComponent(mount)}&path=${encodeURIComponent(path)}`, {signal: ctl.signal})
+        .then(async r => { const v = await r.json(); if (!r.ok) throw Error(v.error); return v as Item; })
+        .then(item => setState({key, item}), e => { if (!ctl.signal.aborted) setState({key, error: (e as Error).message}); });
+    }, 140);
+    return () => { clearTimeout(t); ctl.abort(); };
   }, [mount, path, key]);
-  const it = state?.key === key ? state.item : undefined;
-  const error = state?.key === key ? state.error : undefined;
+  // While the next item loads, keep showing the last one (dimmed) instead of flashing an empty panel.
+  const fresh = state?.key === key;
+  const it = state?.item;
+  const error = fresh ? state?.error : undefined;
 
   const head = <div className="ud-head">
-    <div><small className="dim">{onClose ? 'Selected' : 'This folder'}</small><strong className="mono" title={path}>{it?.name || path.split('/').pop() || mount}</strong></div>
+    <div><small className="dim">{onClose ? 'Selected' : 'This folder'}</small><strong className="mono" title={path}>{(fresh && it?.name) || path.split('/').pop() || mount}</strong></div>
     <div className="ud-head-actions">
       {onOpen && <button className="button small" onClick={onOpen}>Open<ArrowRight size={12} /></button>}
       {onClose && <button className="icon-button" aria-label="Clear selection" onClick={onClose}><X size={14} /></button>}
     </div>
   </div>;
   if (error) return <aside className="usage-detail">{head}<p className="dim">{error}</p></aside>;
-  if (!it) return <aside className="usage-detail">{head}<p className="dim">Loading details…</p></aside>;
+  if (!it) return <aside className="usage-detail" aria-busy="true">{head}<p className="dim">Loading details…</p></aside>;
 
   const dir = it.kind === 'dir' || it.kind === 'locked' || it.kind === 'mount';
   const st = it.stat, cat = it.category, open = it.openBy;
@@ -96,7 +102,7 @@ export default function UsageDetail({mount, path, parentSize, now, scannedAt, on
     ] as [string, React.ReactNode, string?][] : []),
   ];
 
-  return <aside className="usage-detail">
+  return <aside className={`usage-detail${fresh ? '' : ' stale'}`} aria-busy={!fresh}>
     {head}
     {warnings.map(w => <div key={w} className="gpu-note drive-warn"><AlertTriangle size={13} />{w}</div>)}
     {cat ? <div className="ud-cat" style={{borderColor: VERDICTS[cat.verdict][1]}}>
@@ -108,7 +114,7 @@ export default function UsageDetail({mount, path, parentSize, now, scannedAt, on
     {!!it.reclaim?.notes.length && <ul className="ud-notes">{it.reclaim.notes.map(n => <li key={n}>{n}</li>)}</ul>}
     {it.canDelete && <p className={`ud-perm ${it.canDelete.ok ? '' : 'no'}`}>{it.canDelete.ok ? 'You can delete this as the dashboard user.' : `You can’t delete this as the dashboard user: ${it.canDelete.reason}.`}</p>}
     {/* Only a selected item, never the folder being browsed; the server makes the real decision when asked. */}
-    {onClose && token && it.canDelete?.ok && !it.gone && it.kind !== 'mount' && cat?.verdict !== 'keep' &&
+    {fresh && onClose && token && it.canDelete?.ok && !it.gone && it.kind !== 'mount' && cat?.verdict !== 'keep' &&
       <button className="button small danger-outline ud-delete" onClick={() => setDeleting(true)}><Trash2 size={12} />Delete…</button>}
     {deleting && token && <DeleteDialog mount={mount} paths={[path]} token={token} user={user} now={now} onClose={() => setDeleting(false)}
       onDone={r => { setDeleting(false); announceDelete(r, it.name); onDeleted?.(r); }} />}
