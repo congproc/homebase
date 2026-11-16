@@ -318,9 +318,12 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
 
   const scan = current?.scan, prog = current?.running?.progress;
   const sub = running && prog ? `Scanning… ${prog.files.toLocaleString()} files · ${bytes(prog.bytes)} so far`
-    : scan ? `Scanned ${ago(now - scan.scannedAt)} · ${(scan.durationMs / 1000).toFixed(0)} s · ${scan.files.toLocaleString()} files${scan.partial ? ' · incomplete' : ''}`
+    : scan ? `Scanned ${ago(now - scan.scannedAt)} · ${(scan.durationMs / 1000).toFixed(0)} s · ${scan.files.toLocaleString()} files`
     : 'Find the folders and files that take up space';
   const action = <div className="usage-actions">
+    {mount && <div className="segmented usage-views" role="tablist" aria-label="View">
+      {([['map', 'Map'], ['cleanup', 'Cleanup']] as const).map(([v, text]) => <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'selected' : ''} onClick={() => setView(v)}>{text}</button>)}
+    </div>}
     {running ? <button className="button small" disabled={busy} onClick={() => act('cancel')}><Square size={12} />Stop</button>
       : <button className={`button small${scan ? '' : ' primary'}`} disabled={busy || !mount || !token} onClick={() => act('scan')}><RefreshCw size={12} />{scan ? 'Rescan' : 'Scan'}</button>}
   </div>;
@@ -337,10 +340,9 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
     }}>
       {mounts && mounts.length > 1 && <div className="usage-mounts" role="tablist">{mounts.map(m => {
         const pct = m.total ? Math.round((m.used ?? 0) / m.total * 100) : null, l = levelFor(pct ?? 0, 80, 92);
-        return <button key={m.mount} role="tab" aria-selected={m.mount === mount} className={m.mount === mount ? 'selected' : ''} onClick={() => { if (m.mount === mount) { setPath('/'); return; } setMount(m.mount); setPath('/'); setTree(null); }}>
-          <span className="mono">{m.mount}</span>
-          <small>{m.fstype}{m.total ? ` · ${bytes(m.used)} of ${bytes(m.total)}` : ''}{m.running ? ' · scanning' : ''}</small>
-          <small className={`usage-forecast level-${m.space?.level || 'ok'}`}>{forecastText(m.space)}</small>
+        return <button key={m.mount} role="tab" title={`${m.mount} · ${m.fstype}${m.total ? ` · ${bytes(m.used)} of ${bytes(m.total)} used` : ''}`} aria-selected={m.mount === mount} className={m.mount === mount ? 'selected' : ''} onClick={() => { if (m.mount === mount) { setPath('/'); return; } setMount(m.mount); setPath('/'); setTree(null); }}>
+          <span className="um-line"><span className="mono">{m.mount}</span><small>{m.total ? `${bytes(m.used)} / ${bytes(m.total)}` : m.fstype}{m.running ? ' · scanning' : ''}</small></span>
+          {forecastText(m.space) && <small className={`usage-forecast level-${m.space?.level || 'ok'}`}>{forecastText(m.space)}</small>}
           {pct != null && <span className="meter small"><span style={{width: `${pct}%`, background: l === 'ok' ? 'var(--amber)' : levelColor[l]}} /></span>}
         </button>;
       })}</div>}
@@ -356,10 +358,6 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
       </div>}
       {current?.lastError && <div className="gpu-note">Last scan failed: {current.lastError}</div>}
       {running && prog && <div className="usage-progress"><span className="mono">{prog.path}</span><span>{prog.dirs.toLocaleString()} folders{prog.errors ? ` · ${prog.errors} unreadable` : ''}</span></div>}
-
-      {mount && <div className="segmented usage-views" role="tablist" aria-label="View">
-        {([['map', 'Map'], ['cleanup', 'Cleanup']] as const).map(([v, text]) => <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'selected' : ''} onClick={() => setView(v)}>{text}</button>)}
-      </div>}
 
       {view === 'cleanup' && mount && <UsageCleanup mount={mount} token={token} now={now} scannedAt={scannedAt} version={version} setupCommand={setupCommand} onShow={show} onChanged={() => setVersion(v => v + 1)} />}
 
@@ -382,7 +380,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
           <strong>{bytes(node.d)}</strong><span className="dim">{node.f.toLocaleString()} files{node.m ? ` · newest change ${age(node.m, now)}` : ''}{current?.used && parts.length ? ` · ${(node.d / current.used * 100).toFixed(1)}% of used space` : ''}</span>
           {node.g != null && tree?.meta?.previous && <span className={`usage-growth ${node.g > 1024 ** 2 ? 'up' : node.g < -(1024 ** 2) ? 'down' : ''}`} title={`Compared with the scan of ${new Date(tree.meta.previous.scannedAt).toLocaleString()}`}>
             {node.nw ? 'new' : Math.abs(node.g) < 1024 ** 2 ? 'unchanged' : signed(node.g)} since the scan {ago(now - tree.meta.previous.scannedAt)}</span>}
-          {node.p && <span className="dim usage-warn">Some folders could not be read{scan?.partial ? ' or the scan stopped early' : ''}, so totals are lower than the real size.</span>}
+          {node.p && <span className="usage-warn" title={`Some folders could not be read${scan?.partial ? ' or the scan stopped early' : ''}, so totals are lower than the real size.`}><AlertTriangle size={11} />incomplete</span>}
         </div>
         <div className="usage-main">
           <div className={`usage-map${loading ? ' loading' : ''}`} aria-busy={loading}>
@@ -394,7 +392,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
                 : ['dir', 'file', 'files', 'locked', 'mount'].map(k => <span key={k}><i style={{background: TYPES[k][1]}} />{TYPES[k][0]}</span>)}
               {(() => { const h = hover ? findRel(node, hover.split('/')) : null;
                 return h ? <span className="usage-hover" aria-live="off"><span className="mono">{hover}{h.k === 'dir' ? '/' : ''}</span> {bytes(h.d)} · {node.d ? `${(h.d / node.d * 100).toFixed(1)}%` : ''}{h.f > 1 ? ` · ${h.f.toLocaleString()} files` : ''}{h.m ? ` · ${age(h.m, now)}` : ''}{h.t && cats?.[h.t] ? ` · ${cats[h.t].label}` : ''}</span>
-                  : <span className="dim usage-hint">Area is space on disk. Select for details; double-click a folder, or use →, to open it.</span>; })()}
+                  : <span className="dim usage-hint">Area is space on disk · double-click a folder to open it</span>; })()}
             </div>
           </div>
           {mount && (picked.length > 1
@@ -433,11 +431,11 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   </Panel>;
 }
 
-/** "Full in ~23 days", "Growing 1.2 GB/day", or how much history the forecast still needs. */
+/** "Full in ~23 days", "Growing 1.2 GB/day", "Steady"; empty until there is enough history. */
 function forecastText(s?: Space | null) {
   if (!s) return '';
   const f = s.forecast;
-  if (!f) return 'Forecast after a few days of data';
+  if (!f) return ''; // not enough history yet: say nothing rather than fill every card with the same caveat
   if (f.daysLeft != null) return `Full in ~${Math.max(1, Math.round(f.daysLeft))} days`;
   return Math.abs(f.perDay) < 10 * 1024 ** 2 ? 'Steady' : f.perDay > 0 ? `Growing ${bytes(f.perDay)}/day` : `Shrinking ${bytes(-f.perDay)}/day`;
 }
@@ -475,7 +473,7 @@ function UsageList({node, rows: all, now, cats, selected, select, open, checks, 
   </span>;
   return <div className={`usage-list${checks ? ' checking' : ''}`} role="table" aria-label="Largest items" aria-multiselectable="true"
     onClick={e => { if (e.target === e.currentTarget) clear(); }} onMouseLeave={() => setHover(null)}>
-    <div className="usage-row head" role="row">{head('name', 'Name')}{head('size', 'Size')}<span role="columnheader">Share</span>{head('files', 'Files')}{head('newest', 'Newest change')}<span /></div>
+    <div className="usage-row head" role="row">{head('name', 'Name')}{head('size', 'Size')}<span role="columnheader">Share</span>{head('files', 'Files')}{head('newest', 'Changed')}<span /></div>
     {rows.map((c, i) => {
       const drill = c.k === 'dir', pickable = !!c.n, cat = c.t ? cats?.[c.t] : undefined, on = pickable && selected.has(c.n);
       return <div key={c.k + c.n + i} role="row" data-key={pickable ? c.n : undefined} aria-selected={pickable ? on : undefined}
