@@ -154,7 +154,8 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const [sel, setSel] = useState<{at: string; items: string[]; focus: string | null; anchor: string | null} | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [batch, setBatch] = useState<string[] | null>(null);
-  const [menu, setMenu] = useState<{x: number; y: number; keys: string[]; from: HTMLElement | null} | null>(null);
+  const [menu, setMenu] = useState<{id: number; x: number; y: number; keys: string[]; from: HTMLElement | null} | null>(null);
+  const menuId = useRef(0);
   const [hover, setHover] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>({key: 'size', dir: -1});
   // Narrow panel = details sit below the list (container query in CSS); a single pick then gets the selection bar.
@@ -300,9 +301,14 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
     if (!pickedSet.has(key)) setSel({at: here, items: [key], focus: key, anchor: key});
     const from = e.currentTarget as HTMLElement;
     const r = from.getBoundingClientRect();
-    const at = 'clientX' in e && (e.clientX || e.clientY) ? {x: e.clientX, y: e.clientY} : {x: r.left + 24, y: r.bottom - 4};
-    setMenu({...at, keys, from});
+    // From the keyboard (Menu key, Shift+F10) there is no pointer: open under the row's name.
+    const at = 'clientX' in e && (e.clientX || e.clientY) ? {x: e.clientX, y: e.clientY} : {x: r.left + 28, y: r.bottom - 2};
+    setMenu({id: ++menuId.current, ...at, keys, from});
   };
+  /** Ctrl/Cmd+C, the menu's Copy path: the selected items' full paths, one per line. */
+  const copyPaths = (keys: string[]) => navigator.clipboard.writeText(keys.map(absolute).join('\n'))
+    .then(() => toast.success(keys.length === 1 ? 'Path copied' : `${keys.length} paths copied`, {description: keys.length === 1 ? absolute(keys[0]) : undefined}))
+    .catch(() => toast.error('Could not copy to the clipboard'));
   const absolute = (key: string) => (mount === '/' ? '' : mount) + fromMount(key);
   /**
    * Esc clears, Delete deletes the selection, Ctrl/Cmd-A selects the whole folder: while focus is in this panel or on
@@ -315,6 +321,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
     if (e.key === 'Escape' && (picked.length || selectMode)) { e.preventDefault(); clear(); }
     else if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && picked.length && token && view === 'map') { e.preventDefault(); setBatch(picked.map(fromMount)); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view === 'map' && order.length) { e.preventDefault(); selectAll(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && view === 'map' && picked.length && !String(window.getSelection() ?? '')) { e.preventDefault(); copyPaths(picked); }
     else if (((e.key === 'Backspace' && !e.metaKey && !e.ctrlKey) || (e.altKey && e.key === 'ArrowUp')) && view === 'map' && parts.length) { e.preventDefault(); goUp(); }
   };
   useLayoutEffect(() => { keysRef.current = onKeys; });
@@ -423,13 +430,26 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
         <UsageList node={node} rows={sorted} now={now} cats={cats} selected={pickedSet} select={select} open={openByKey} checks={selectMode || picked.length > 1}
           longPress={k => { setSelectMode(true); select([k], {add: true}); }} menu={openMenu} hover={hover} setHover={setHover} sort={sort} setSort={setSort}
           move={move} clear={() => picked.length && !selectMode && setSel(null)} />
-        {menu && <ItemMenu at={menu} count={menu.keys.length} close={() => { const f = menu.from; setMenu(null); f?.focus?.(); }} items={[
-          ...(menu.keys.length === 1 && findRel(node, menu.keys[0].split('/'))?.k === 'dir' ? [{icon: FolderOpen, label: 'Open', run: () => open(menu.keys[0].split('/'))}] : []),
-          {icon: Copy, label: menu.keys.length === 1 ? 'Copy path' : `Copy ${menu.keys.length} paths`, run: () => navigator.clipboard.writeText(menu.keys.map(absolute).join('\n'))
-            .then(() => toast.success(menu.keys.length === 1 ? 'Path copied' : 'Paths copied')).catch(() => toast.error('Could not copy'))},
-          {icon: CheckCheck, label: 'Select all', run: selectAll},
-          ...(token ? [{icon: Trash2, label: menu.keys.length === 1 ? 'Delete…' : `Delete ${menu.keys.length} items…`, danger: true, run: () => setBatch(menu.keys.map(fromMount))}] : []),
-        ]} />}
+        {menu && (() => {
+          const one = menu.keys.length === 1 ? findRel(node, menu.keys[0].split('/')) : null;
+          const total = menu.keys.reduce((t, k) => t + sizeOf(k), 0);
+          return <ItemMenu key={menu.id} at={menu}
+            title={one ? {name: menu.keys[0].split('/').pop()! + (one.k === 'dir' ? '/' : ''), meta: bytes(one.d), color: TYPES[one.k]?.[1]} : {name: `${menu.keys.length} items`, meta: bytes(total)}}
+            // Escape or choosing an entry puts focus back on the item; a click elsewhere leaves focus where it went.
+            close={restore => {
+              const f = menu.from;
+              // A retiring menu's queued listener must not dismiss its replacement.
+              setMenu(current => current?.id === menu.id ? null : current);
+              if (restore && f?.isConnected) f.focus({preventScroll: true});
+            }}
+            groups={[
+              [...(one?.k === 'dir' ? [{icon: FolderOpen, label: 'Open', hint: 'Enter', run: () => open(menu.keys[0].split('/'))}] : []),
+                {icon: Copy, label: menu.keys.length === 1 ? 'Copy path' : `Copy ${menu.keys.length} paths`, hint: `${MOD}C`, run: () => copyPaths(menu.keys)},
+                {icon: CheckCheck, label: 'Select all', hint: `${MOD}A`, run: selectAll},
+                ...(menu.keys.length > 1 ? [{icon: X, label: 'Clear selection', hint: 'Esc', run: clear}] : [])],
+              token ? [{icon: Trash2, label: menu.keys.length === 1 ? 'Delete…' : `Delete ${menu.keys.length} items…`, hint: 'Del', danger: true, run: () => setBatch(menu.keys.map(fromMount))}] : [],
+            ]} />;
+        })()}
         {(picked.length > 1 || selectMode || (narrow && picked.length === 1)) && <div className="selection-bar" role="region" aria-label="Selection">
           {picked.length === 1 && !selectMode
             ? <><strong className="mono sb-name" title={picked[0]}>{picked[0].split('/').pop()}</strong><span className="dim">{bytes(pickedBytes)}</span></>
@@ -534,42 +554,80 @@ function SelectionSummary({node, items, bytes: total, remove, clear, del}: {node
   </aside>;
 }
 
+const MOD = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+type MenuEntry = {icon: React.ElementType; label: string; hint?: string; run: () => void; danger?: boolean};
+
 /**
- * The right-click menu: positioned at the pointer and kept inside the window, focus on the first entry, arrow keys
- * move, Enter runs, Esc / a click elsewhere / scrolling closes it and focus goes back to the item.
+ * The right-click menu, in the manner of a desktop file manager's:
+ *  - Says what it acts on (name and size, or "4 items · 13 GB"), groups entries, separates Delete, shows shortcuts.
+ *  - Opens just off the pointer and flips left / up near the window's edges; it is measured before it is shown, so
+ *    it never appears in one place and jumps to another, and it grows from the corner nearest the pointer.
+ *  - Keyboard: focus starts on the first entry; arrows (wrapping), Home/End, typing a letter jumps to that entry;
+ *    Enter runs; Esc or Tab closes and focus returns to the item. A click or right-click elsewhere just closes it
+ *    (a right-click on another item opens that item's menu instead), and so do scrolling (wheel or touch), resizing or leaving the window.
  */
-function ItemMenu({at, count, items, close}: {at: {x: number; y: number}; count: number; close: () => void;
-  items: {icon: React.ElementType; label: string; run: () => void; danger?: boolean}[]}) {
+function ItemMenu({at, title, groups, close}: {at: {x: number; y: number}; title: {name: string; meta: string; color?: string};
+  groups: MenuEntry[][]; close: (restoreFocus: boolean) => void}) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({left: at.x, top: at.y});
+  const closeRef = useRef(close);
+  useLayoutEffect(() => { closeRef.current = close; });
+  const [pos, setPos] = useState<{left: number; top: number; origin: string} | null>(null);
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
-    const {width, height} = el.getBoundingClientRect(), pad = 8;
-    setPos({left: Math.max(pad, Math.min(at.x, window.innerWidth - width - pad)), top: Math.max(pad, Math.min(at.y, window.innerHeight - height - pad))});
-    el.querySelector<HTMLButtonElement>('button')?.focus();
+    const {width, height} = el.getBoundingClientRect(), pad = 8, gap = 2;
+    const right = at.x + gap + width <= window.innerWidth - pad, down = at.y + gap + height <= window.innerHeight - pad;
+    setPos({
+      left: right ? at.x + gap : Math.max(pad, at.x - gap - width),
+      top: down ? at.y + gap : Math.max(pad, at.y - gap - height),
+      origin: `${down ? 'top' : 'bottom'} ${right ? 'left' : 'right'}`,
+    });
   }, [at.x, at.y]);
+  useEffect(() => { if (pos) ref.current?.querySelector<HTMLButtonElement>('[role=menuitem]')?.focus({preventScroll: true}); }, [pos]);
   useEffect(() => {
-    const away = (e: Event) => { if (!ref.current?.contains(e.target as Node)) close(); };
-    const shut = () => close();
+    // A right-button press elsewhere is followed by a contextmenu: an item's handler opens its own menu in place of this
+    // one (no close-then-reopen flicker, no focus thrown back to the old item); anywhere else, the contextmenu closes it.
+    const away = (e: Event) => { if ((e as PointerEvent).button !== 2 && !ref.current?.contains(e.target as Node)) closeRef.current(false); };
+    const other = (e: Event) => { if (!e.defaultPrevented && !ref.current?.contains(e.target as Node)) closeRef.current(false); };
+    // Only a scroll the user makes closes it (wheel, touch drag; a scrollbar drag starts with a pointerdown): the page
+    // also scrolls by itself when the selection changes the layout (scroll anchoring), which must not shut the menu.
+    const scroll = (e: Event) => { if (!ref.current?.contains(e.target as Node)) closeRef.current(false); };
+    const shut = () => closeRef.current(false);
     window.addEventListener('pointerdown', away, true);
-    window.addEventListener('scroll', shut, true);
+    window.addEventListener('contextmenu', other);
+    window.addEventListener('wheel', scroll, {capture: true, passive: true});
+    window.addEventListener('touchmove', scroll, {capture: true, passive: true});
     window.addEventListener('resize', shut);
     window.addEventListener('blur', shut);
-    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('scroll', shut, true); window.removeEventListener('resize', shut); window.removeEventListener('blur', shut); };
-  }, [close]);
+    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('contextmenu', other); window.removeEventListener('wheel', scroll, true); window.removeEventListener('touchmove', scroll, true); window.removeEventListener('resize', shut); window.removeEventListener('blur', shut); };
+  }, []);
   const onKey = (e: React.KeyboardEvent) => {
-    const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
-    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); close(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); buttons[(i + 1) % buttons.length]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); buttons[(i - 1 + buttons.length) % buttons.length]?.focus(); }
-    else if (e.key === 'Home') { e.preventDefault(); buttons[0]?.focus(); }
-    else if (e.key === 'End') { e.preventDefault(); buttons.at(-1)?.focus(); }
+    const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    const go = (j: number) => { e.preventDefault(); items[(j + items.length) % items.length]?.focus(); };
+    e.stopPropagation(); // the panel's own keys (Esc, Delete, Ctrl+A) must not act while the menu is open
+    if (e.key === 'Escape') { e.preventDefault(); close(true); }
+    else if (e.key === 'Tab') { e.preventDefault(); close(true); }
+    else if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(items.length - 1);
+    else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const k = e.key.toLowerCase(), order = [...items.slice(i + 1), ...items.slice(0, i + 1)];
+      const hit = order.find(b => b.dataset.label?.toLowerCase().startsWith(k));
+      if (hit) { e.preventDefault(); hit.focus(); }
+    }
   };
-  return <div ref={ref} className="item-menu" role="menu" aria-label={count > 1 ? `${count} selected items` : 'Item'} style={pos} onKeyDown={onKey} onContextMenu={e => e.preventDefault()}>
-    {count > 1 && <div className="item-menu-head">{count} selected</div>}
-    {items.map(({icon: Icon, label, run, danger}) => <button key={label} role="menuitem" className={danger ? 'danger' : ''} onClick={() => { close(); run(); }}>
-      <Icon size={13} />{label}
-    </button>)}
+  const shown = groups.filter(g => g.length);
+  return <div ref={ref} className="item-menu" role="menu" aria-label={`${title.name}, ${title.meta}`} onKeyDown={onKey} onContextMenu={e => e.preventDefault()}
+    style={pos ? {left: pos.left, top: pos.top, transformOrigin: pos.origin} : {left: at.x, top: at.y, visibility: 'hidden'}} data-ready={pos ? '' : undefined}>
+    <div className="item-menu-head" aria-hidden="true">
+      {title.color && <i style={{background: title.color}} />}<span className="mono">{title.name}</span><span className="dim">{title.meta}</span>
+    </div>
+    {shown.map((g, gi) => <div key={gi} role="group" className="item-menu-group">
+      {gi > 0 && <div role="separator" className="item-menu-sep" />}
+      {g.map(({icon: Icon, label, hint, run, danger}) => <button key={label} role="menuitem" tabIndex={-1} data-label={label} className={danger ? 'danger' : ''} onClick={() => { close(true); run(); }}>
+        <Icon size={14} aria-hidden="true" /><span>{label}</span>{hint && <kbd aria-hidden="true">{hint}</kbd>}
+      </button>)}
+    </div>)}
   </div>;
 }
