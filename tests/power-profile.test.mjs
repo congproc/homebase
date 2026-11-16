@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DEFAULTS, account, autoTarget, busyReasons, parseSettings, parseSmi, report} from '../server/powerprofile.mjs';
-import {advise, hoursBetween} from '../server/advisor.mjs';
+import {advise, hoursBetween, idleLevel} from '../server/advisor.mjs';
 
 test('settings are validated and clamped', () => {
   assert.deepEqual(parseSettings(null), DEFAULTS);
@@ -54,4 +54,13 @@ test('advisor ranks suggestions first and prices night sleep', () => {
   assert.equal(fw.action.kind, 'note');
   assert.match(fw.detail, /Native ASPM/);
   assert.ok(advise({watts: 40, profileMode: 'auto', gpus: [], idle: {name: 'C10', level: 10}, vendor: 'GenuineIntel'}).every(i => i.status === 'ok'));
+});
+
+test('ACPI idle names are read by their MWAIT hint, not their ordinal', () => {
+  assert.deepEqual(idleLevel('C3_ACPI', 'ACPI FFH MWAIT 0x60'), {name: 'C10 (C3_ACPI)', level: 10});
+  assert.deepEqual(idleLevel('C2_ACPI', 'ACPI FFH MWAIT 0x21'), {name: 'C6 (C2_ACPI)', level: 6});
+  assert.deepEqual(idleLevel('C3_ACPI', 'ACPI FFH MWAIT 0x10'), {name: 'C3 (C3_ACPI)', level: 3});
+  assert.deepEqual(idleLevel('C3_ACPI', 'ACPI IOPORT 0x414'), {name: 'C3_ACPI', level: 3});
+  assert.deepEqual(idleLevel('C10', 'MWAIT 0x60'), {name: 'C10', level: 10});
+  assert.deepEqual(idleLevel('POLL', 'CPUIDLE CORE POLL IDLE'), {name: 'POLL', level: 0});
 });

@@ -18,13 +18,27 @@ export const hoursBetween = (from, to) => {
   return ((b - a + 1440) % 1440) / 60;
 };
 
-/** Deepest CPU idle state the kernel can use (from cpu0's cpuidle states), e.g. "C10" or "C3_ACPI". */
+// Intel MWAIT hint (bits 7:4) → hardware C-state on client CPUs: 0x00 C1, 0x10 C3, 0x20 C6, 0x30 C7, 0x40 C8, 0x50 C9, 0x60 C10.
+const MWAIT_CSTATE = [1, 3, 6, 7, 8, 9, 10];
+
+/**
+ * One cpuidle state's real depth. ACPI names (C1_ACPI, C2_ACPI, C3_ACPI) are only ordinals from the firmware's
+ * _CST table, so "C3_ACPI" can be hardware C10; the MWAIT hint in the description tells the actual state.
+ */
+export function idleLevel(name, desc = '') {
+  const hint = desc.match(/MWAIT\s+0x([0-9a-f]+)/i);
+  const hw = hint ? MWAIT_CSTATE[(parseInt(hint[1], 16) >> 4) & 0xf] : undefined;
+  if (hw) return {name: /_ACPI$/.test(name) && `C${hw}` !== name ? `C${hw} (${name})` : name, level: hw};
+  return {name, level: Number(name.match(/^C(\d+)/)?.[1] ?? 0)};
+}
+
+/** Deepest CPU idle state the kernel can use (from cpu0's cpuidle states), e.g. "C10" or "C10 (C3_ACPI)". */
 async function deepestIdle() {
   const dir = '/sys/devices/system/cpu/cpu0/cpuidle';
   const states = (await readdir(dir).catch(() => [])).filter(n => /^state\d+$/.test(n));
-  const names = await Promise.all(states.map(async s => ((await text(`${dir}/${s}/disable`)) === '1' ? null : text(`${dir}/${s}/name`))));
-  const levels = names.filter(Boolean).map(n => ({name: n, level: Number(n.match(/^C(\d+)/)?.[1] ?? 0)}));
-  return levels.sort((a, b) => b.level - a.level)[0] || null;
+  const found = await Promise.all(states.map(async s => ((await text(`${dir}/${s}/disable`)) === '1' ? null
+    : idleLevel(await text(`${dir}/${s}/name`) ?? '', await text(`${dir}/${s}/desc`) ?? ''))));
+  return found.filter(Boolean).sort((a, b) => b.level - a.level)[0] || null;
 }
 
 /** The checks, from facts gathered elsewhere (kept pure so it can be tested). */
