@@ -26,6 +26,15 @@ export const ago = (ms: number) => {
   return `${Math.floor(s / 86400)}d ago`;
 };
 
+/** Like `ago`, but readable for old dates: "45d ago", then "7 months ago", then "32 years ago". */
+export const since = (ms: number) => {
+  const days = ms / 86400000;
+  if (days < 60) return ago(ms);
+  if (days < 548) return `${Math.round(days / 30.44)} months ago`;
+  const years = Math.round(days / 365.25);
+  return `${years} years ago`;
+};
+
 export const clock = (t: number, seconds = false) =>
   new Date(t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', ...(seconds ? {second: '2-digit'} : {})});
 

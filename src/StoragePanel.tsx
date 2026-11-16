@@ -2,6 +2,7 @@ import {AlertTriangle, Copy, HardDrive, ShieldCheck, Thermometer} from 'lucide-r
 import {toast} from 'sonner';
 import {Panel, Empty, Skeleton} from './components/panels';
 import {AreaChart} from './components/charts';
+import UsagePanel from './UsagePanel';
 import {bytes, diskHealth, levelColor, levelFor, rate} from './lib/format';
 import type {Disk, DiskSmart, Status} from './lib/types';
 
@@ -116,6 +117,7 @@ export default function StoragePanel({d}: {d: Status | null}) {
   const cmd = d.disks.setupCommand || '';
   return <div className="storage-view">
     <DriveCards disks={disks} />
+    <UsagePanel token={d.token} now={d.at} setupCommand={d.disks?.setupCommand} user={d.user} />
     {needsSetup && <div className="setup-notice">
       <ShieldCheck size={20} />
       <div>

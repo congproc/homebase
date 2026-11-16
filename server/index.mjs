@@ -13,7 +13,11 @@ import {tmuxNew,tmuxKill,serviceAction,startAgent,stopAgent,SESSION_NAME} from '
 import {LAUNCHABLE,agentSnapshot,locateTools} from './agents.mjs';
 import {getPowerProfile,savePowerProfile,startPowerProfiles} from './powerprofile.mjs';
 import {getAdvice} from './advisor.mjs';
-import {getMachine,machineAction} from './machine.mjs';
+import {getMachine,machineAction,verifyOwnPassword} from './machine.mjs';
+import {createUsage} from './usage.mjs';
+import {createCleanup} from './cleanup.mjs';
+import {protectedPaths} from './delete.mjs';
+import {createSpace} from './space.mjs';
 import http from 'node:http';
 import os from 'node:os';
 import { readFile, stat, statfs } from 'node:fs/promises';
@@ -39,6 +43,11 @@ async function sleepPeriods(){
 }
 const record=(message)=>{events.unshift({message,at:Date.now()});events.splice(30);};
 record('Local monitoring started');
+const usage=createUsage({record,trashDays:config.storage.trashDays,verifyPassword:verifyOwnPassword,protect:protectedPaths({root:ROOT})});
+const cleanup=createCleanup({record});
+// Free space per filesystem, sampled hourly in the background: levels, forecast and the Storage badge.
+const space=createSpace({targets:()=>usage.targets()});space.start();
+process.on('exit',()=>usage.stopAll());
 // Interpreters and runtimes all look alike in `ps` (node shows as "MainThread"); name them by the script they run.
 const GENERIC=new Set(['MainThread','node','python','python3','bun','deno','java','ruby','perl']);
 const base=p=>p.split('/').pop();
@@ -120,9 +129,20 @@ const server=http.createServer(async(req,res)=>{
  if(req.method==='GET'&&url.pathname==='/api/machine')return send(res,200,await getMachine());
  if(req.method==='GET'&&url.pathname==='/api/alerts'){await checkAlerts();return send(res,200,await getAlerts());}
  if(req.method==='GET'&&url.pathname==='/api/traffic')return send(res,200,await getTraffic(url.searchParams.get('site')||undefined,url.searchParams.get('range')||undefined));
- if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,token,version:VERSION,updateAvailable:updateAvailable(),alertsUnread:await unreadAlerts().catch(()=>0)});
+ if(req.method==='GET'&&url.pathname==='/api/status')return send(res,200,{...snapshot,space:space.status().map(({mount,percent,level,forecast})=>({mount,percent,level,daysLeft:forecast?.daysLeft??null})),token,version:VERSION,updateAvailable:updateAvailable(),alertsUnread:await unreadAlerts().catch(()=>0)});
  if(req.method==='GET'&&url.pathname==='/api/update')return send(res,200,await updateStatus());
- if(req.method==='POST'&&['/api/action','/api/power','/api/profile','/api/traffic/control','/api/alerts','/api/update','/api/machine'].includes(url.pathname)){
+ if(req.method==='GET'&&url.pathname==='/api/storage'){
+  const list=await usage.list(),levels=space.status();
+  // Low on space: name the three biggest things worth reviewing right in the warning (when the filesystem was scanned).
+  for(const m of list.mounts){const s=levels.find(x=>x.mount===m.mount);m.space=s?{percent:s.percent,level:s.level,forecast:s.forecast}:null;
+   if(s&&s.level!=='ok')m.space.suggest=(await usage.candidates(m.mount,{checkOpen:false}).catch(()=>({items:[]}))).items.slice(0,3).map(({path,bytes,label})=>({path,bytes,label}));}
+  return send(res,200,list);
+ }
+ if(req.method==='GET'&&url.pathname==='/api/storage/cleanup'){try{const mount=url.searchParams.get('mount');const [tools,candidates,growth,meta,deleted]=await Promise.all([cleanup.measureAll(url.searchParams.get('refresh')==='1'),usage.candidates(mount),usage.growth(mount),usage.scanMeta(mount),space.deletedOpen(mount)]);return send(res,200,{tools,candidates,growth,deletedOpen:deleted,gap:meta?.fsUsed!=null?{fsUsed:meta.fsUsed,scanned:meta.bytes,errors:meta.errors,stoppedEarly:!!meta.stoppedEarly,at:meta.scannedAt}:null,home:os.homedir()})}catch(e){return send(res,400,{error:e.message})}}
+ if(req.method==='GET'&&url.pathname==='/api/storage/trash')return send(res,200,await usage.trash.list());
+ if(req.method==='GET'&&url.pathname==='/api/storage/item'){try{return send(res,200,await usage.item(url.searchParams.get('mount'),url.searchParams.get('path')||'/'))}catch(e){return send(res,400,{error:e.message})}}
+ if(req.method==='GET'&&url.pathname==='/api/storage/tree'){try{return send(res,200,await usage.tree(url.searchParams.get('mount'),url.searchParams.get('path')||'/',url.searchParams.get('depth')))}catch(e){return send(res,400,{error:e.message})}}
+ if(req.method==='POST'&&['/api/action','/api/power','/api/profile','/api/traffic/control','/api/alerts','/api/update','/api/machine','/api/storage'].includes(url.pathname)){
  const supplied=Buffer.from(String(req.headers['x-server-token']||''));const expected=Buffer.from(token);if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected))return send(res,403,{error:'Refresh the dashboard and try again'});
  if(!/^application\/json\b/i.test(req.headers['content-type']||''))return send(res,415,{error:'Expected application/json'});
  let body='';for await(const chunk of req){body+=chunk;if(body.length>32768)return send(res,413,{error:'Request too large'});}let payload;try{payload=JSON.parse(body)}catch{return send(res,400,{error:'Invalid JSON'})}
@@ -132,6 +152,16 @@ const server=http.createServer(async(req,res)=>{
   return send(res,400,{error:'Unsupported action'});
  }catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/machine'){try{const out=await machineAction(payload.action,payload.password);record(payload.action==='reboot'?'Machine restart requested':'Machine power off requested');return send(res,200,out)}catch(e){return send(res,400,{error:e.message})}}
+ if(url.pathname==='/api/storage'){try{
+  if(payload.action==='scan')return send(res,200,await usage.start(payload.mount));
+  if(payload.action==='cancel')return send(res,200,usage.cancel(payload.mount));
+  if(payload.action==='cleanup')return send(res,200,await cleanup.run(payload.tool,payload.arg));
+  if(payload.action==='delete-prepare')return send(res,200,await usage.prepareDelete(payload.mount,payload.path));
+  if(payload.action==='delete')return send(res,200,await usage.remove(payload.id,payload.mode,payload.password));
+  if(payload.action==='trash-restore')return send(res,200,await usage.trash.restore(payload.id));
+  if(payload.action==='trash-purge')return send(res,200,await usage.trash.purge(payload.id,payload.password));
+  return send(res,400,{error:'Unsupported action'});
+ }catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/alerts'){try{return send(res,200,await updateAlerts(payload))}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/traffic/control'){try{const c=await updateControl(payload);const {action,sid,ip}=payload;record(`traffic: ${action} ${sid||ip}`);return send(res,200,c)}catch(e){return send(res,400,{error:e.message})}}
  if(url.pathname==='/api/profile'){try{const p=await savePowerProfile(payload);record(`Power profile: ${p.settings.mode}`);return send(res,200,p)}catch(e){return send(res,400,{error:e.message})}}

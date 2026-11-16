@@ -67,6 +67,8 @@ export const config = Object.freeze({
     login: process.env.HOMEBASE_TAILSCALE_LOGIN || file.tailscale?.login || undefined,
   },
   services,
+  /** Disk usage: days before items Homebase moved to the trash are deleted for good (0 keeps them). */
+  storage: {trashDays: Number.isInteger(file.storage?.trashDays) && file.storage.trashDays >= 0 && file.storage.trashDays <= 365 ? file.storage.trashDays : 7},
   /** Units hidden from the hosted-services list (prefix match). */
   hiddenUnits: ['server-night-sleep', 'snap.', ...(Array.isArray(file.hiddenUnits) ? file.hiddenUnits : [])],
   traffic: {

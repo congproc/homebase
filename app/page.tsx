@@ -197,7 +197,8 @@ function Home() {
   const h = health(d, error);
   const stale = d ? now - d.at : 0;
   // Badges only for things that need attention; plain counts live on the pages themselves.
-  const counts: Partial<Record<PageName, number>> = d?.alertsUnread ? {Traffic: d.alertsUnread} : {};
+  const low = (d?.space || []).filter(s => s.level !== 'ok');
+  const counts: Partial<Record<PageName, number>> = {...(d?.alertsUnread ? {Traffic: d.alertsUnread} : {}), ...(low.length ? {Storage: low.length} : {})};
   useStatusFavicon(h.level);
   const unread = d?.alertsUnread || 0;
   useEffect(() => { document.title = `${unread ? `(${unread}) ` : ''}${page} · Homebase`; }, [page, unread]);
@@ -208,6 +209,21 @@ function Home() {
     if (lastUnread.current !== null && n > lastUnread.current) toast.warning(`${n - lastUnread.current} new security ${n - lastUnread.current === 1 ? 'alert' : 'alerts'}`, {description: 'Failed sign-ins or a new public device on your hosted site.', action: {label: 'View', onClick: () => setPage('Traffic')}});
     lastUnread.current = n;
   }, [d?.alertsUnread, setPage]);
+  // Low disk space: a toast when a filesystem gets worse (ok → warn → critical), not on every poll.
+  const spaceKey = (d?.space || []).map(s => `${s.mount}=${s.level}`).join(',');
+  const lastSpace = useRef<Map<string, string> | null>(null);
+  useEffect(() => {
+    if (!d?.space) return;
+    const rank = {ok: 0, warn: 1, critical: 2} as const;
+    const before = lastSpace.current;
+    for (const s of d.space) {
+      const prev = before?.get(s.mount) as keyof typeof rank | undefined;
+      if (before && rank[s.level] > rank[prev ?? 'ok'])
+        toast.warning(`${s.mount} is ${s.percent}% full`, {description: s.daysLeft != null ? `At the current rate it fills up in about ${Math.max(1, Math.round(s.daysLeft))} days.` : 'Free some space before it fills up.', action: {label: 'Review', onClick: () => setPage('Storage')}});
+    }
+    lastSpace.current = new Map(d.space.map(s => [s.mount, s.level]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- spaceKey captures what matters in d.space
+  }, [spaceKey, setPage]);
 
   const containersPanel = (full?: boolean) => <ContainersPanel d={d} busy={busy} pending={pending} full={full} go={full ? undefined : () => setPage('services/containers')}
     onAction={(id, act) => action('docker', id, act, containers.find(c => c.ID === id)?.Names)} onConfirm={async (c, act) => {
@@ -239,7 +255,8 @@ function Home() {
         <SidebarContent>
           <div className="workspace">
             <span className="host-avatar"><Server size={16} /></span>
-            <div><strong>{d?.hostname || 'Home lab'}</strong><small>{d ? `${d.cores} cores · ${elapsed(uptime).split(' ').slice(0, 2).join(' ')} up` : 'Connecting…'}</small></div>
+            {/* One line, always: the uptime grows ("1h 38m" → "12d 4h"), so it is shortened and never wraps. */}
+            <div title={d ? `${d.hostname} · ${d.cores} cores · up ${elapsed(uptime)}` : undefined}><strong>{d?.hostname || 'Home lab'}</strong><small>{d ? `${d.cores} cores · ${elapsed(uptime).split(' ').slice(0, 2).join(' ')} up` : 'Connecting…'}</small></div>
             <span className={`pulse-dot level-${h.level}`} title={h.title} />
           </div>
           <button className="sidebar-search" onClick={() => setPalette(true)}>
@@ -252,7 +269,7 @@ function Home() {
                 <SidebarMenuItem key={n}>
                   <NavButton active={page === n} onClick={() => setPage(n)}>
                     <Icon size={17} /><span>{n}</span>
-                    {counts[n] ? <em className={n === 'Traffic' ? 'alert' : undefined}>{counts[n]}</em> : i < 10 ? <kbd className="nav-key">{(i + 1) % 10}</kbd> : null}
+                    {counts[n] ? <em className={n === 'Traffic' || n === 'Storage' ? 'alert' : undefined}>{counts[n]}</em> : i < 10 ? <kbd className="nav-key">{(i + 1) % 10}</kbd> : null}
                   </NavButton>
                 </SidebarMenuItem>
               ))}

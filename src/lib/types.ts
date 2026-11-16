@@ -88,6 +88,8 @@ export type Status = {
   version?: string;
   updateAvailable?: boolean;
   alertsUnread?: number;
+  /** Free space per filesystem (server/space.mjs): level from how full it is and how soon it fills. */
+  space?: {mount: string; percent: number; level: 'ok' | 'warn' | 'critical'; daysLeft: number | null}[];
 };
 
 export type FeatureId = 'docker' | 'tmux' | 'ai' | 'traffic' | 'energy' | 'gpu';

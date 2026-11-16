@@ -50,7 +50,8 @@ def sudoers_for(user):
     return (f'# Installed by Homebase. Validated sleep-policy updates and start/stop/restart of custom units in\n'
             f'# /etc/systemd/system, read-only SMART health of whole disks, and desktop on/off (boot target +\n'
             f'# display manager), eco/balanced/performance power profiles, and reboot/power off (the helper itself\n'
-            f'# requires the account password for those), through a fixed-purpose helper;\n'
+            f'# requires the account password for those), and three fixed disk cleanups (apt-get clean, journal\n'
+            f'# vacuum to a set size, removal of disabled snap revisions), through a fixed-purpose helper;\n'
             f'# arguments are validated by the helper. No shell.\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power apply\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power service *\n'
@@ -61,7 +62,12 @@ def sudoers_for(user):
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power machine poweroff\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile eco\n'
             f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile balanced\n'
-            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile performance\n')
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power profile performance\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power cleanup apt\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power cleanup snaps\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power cleanup journal 200M\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power cleanup journal 500M\n'
+            f'{user} ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power cleanup journal 1G\n')
 
 
 def run(*args, **kw):

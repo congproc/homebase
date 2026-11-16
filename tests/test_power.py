@@ -299,3 +299,38 @@ class SudoersTest(unittest.TestCase):
         rules = [l for l in installer.sudoers_for('alice').splitlines() if 'machine' in l and not l.startswith('#')]
         self.assertEqual(rules, ['alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power machine reboot',
                                  'alice ALL=(root) NOPASSWD: /usr/local/sbin/homebase-power machine poweroff'])
+
+
+class CleanupTest(unittest.TestCase):
+    LISTING = ('Name    Version   Rev    Tracking       Publisher   Notes\n'
+               'core24  20240920  609    latest/stable  canonical✓  base,disabled\n'
+               'core24  20241001  716    latest/stable  canonical✓  base\n'
+               'firefox 131.0     4793   latest/stable  mozilla✓    disabled\n'
+               'evil;rm 1         1      latest/stable  x           disabled\n'
+               'local   1.0       x1     -              -           disabled\n')
+
+    def test_disabled_snaps_only_valid_names(self):
+        self.assertEqual(power.disabled_snaps(self.LISTING), [('core24', '609'), ('firefox', '4793'), ('local', 'x1')])
+
+    def test_rejects_unknown_kinds_and_sizes_before_privileges(self):
+        for args in (('rm', None), ('apt', 'x'), ('journal', None), ('journal', '10G'), ('journal', '../x'), ('snaps', '1')):
+            with self.assertRaisesRegex(ValueError, 'Unsupported'):
+                power.cleanup(*args)
+
+    def test_requires_root(self):
+        with patch.object(power.os, 'geteuid', return_value=1000), self.assertRaisesRegex(ValueError, 'administrator'):
+            power.cleanup('apt')
+
+    def test_runs_fixed_commands_without_shell(self):
+        calls = []
+        def fake(args, **kw):
+            calls.append(args)
+            return SimpleNamespace(returncode=0, stdout=self.LISTING if args[1:3] == ['list', '--all'] else '', stderr='Vacuuming done, freed 1.2G of archived journals')
+        with patch.object(power.os, 'geteuid', return_value=0), patch.object(power.subprocess, 'run', side_effect=fake):
+            self.assertEqual(power.cleanup('apt')['done'], ['apt-get clean'])
+            self.assertIn('freed 1.2G', power.cleanup('journal', '500M')['done'][0])
+            power.cleanup('snaps')
+        self.assertIn(['/usr/bin/apt-get', 'clean'], calls)
+        self.assertIn(['/usr/bin/journalctl', '--vacuum-size=500M'], calls)
+        self.assertIn(['/usr/bin/snap', 'remove', 'firefox', '--revision', '4793'], calls)
+        self.assertFalse(any('evil;rm' in a for c in calls for a in c))

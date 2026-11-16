@@ -1,6 +1,7 @@
 #!/usr/bin/python3 -I
 """Fixed-purpose, root-owned bridge for Homebase's nightly sleep policy, service control, SMART reads, desktop on/off,
-power profiles and password-confirmed reboot / power off."""
+power profiles, password-confirmed reboot / power off, and three fixed disk cleanups (APT cache, journal size, disabled
+snap revisions)."""
 import fcntl
 import json
 import os
@@ -280,6 +281,52 @@ def smart(name):
     return smart_summary(data)
 
 
+# ---------- disk cleanup ----------
+# Only these three, each a package tool's own cleanup command with fixed arguments. Nothing here takes a path,
+# so the dashboard can never use it to delete an arbitrary file as root.
+JOURNAL_SIZES = ('200M', '500M', '1G')
+SNAP_NAME = re.compile(r'[a-z0-9][a-z0-9-]{0,39}\Z')
+SNAP_REV = re.compile(r'x?\d{1,10}\Z')
+
+def disabled_snaps(listing):
+    """`snap list --all` → [(name, revision)] for revisions marked disabled (kept only for rollback)."""
+    out = []
+    for line in listing.splitlines()[1:]:
+        f = line.split()
+        if len(f) >= 6 and 'disabled' in f[-1].split(',') and SNAP_NAME.fullmatch(f[0]) and SNAP_REV.fullmatch(f[2]):
+            out.append((f[0], f[2]))
+    return out
+
+def cleanup(kind, arg=None):
+    if kind == 'journal':
+        if arg not in JOURNAL_SIZES:
+            raise ValueError('Unsupported journal size')
+    elif kind not in ('apt', 'snaps') or arg is not None:
+        raise ValueError('Unsupported cleanup')
+    if os.geteuid() != 0:
+        raise ValueError('Cleanup requires administrator privileges')
+    done = []
+    if kind == 'apt':
+        r = subprocess.run(['/usr/bin/apt-get', 'clean'], text=True, capture_output=True, timeout=120)
+        if r.returncode:
+            raise ValueError((r.stderr.strip() or 'apt-get clean failed')[-200:])
+        done.append('apt-get clean')
+    elif kind == 'journal':
+        r = subprocess.run(['/usr/bin/journalctl', '--vacuum-size=' + arg], text=True, capture_output=True, timeout=120)
+        if r.returncode:
+            raise ValueError((r.stderr.strip() or 'journalctl failed')[-200:])
+        lines = (r.stderr.strip() or r.stdout.strip()).splitlines()
+        done.append(lines[-1][:200] if lines else 'journal vacuumed')
+    else:
+        listing = subprocess.run(['/usr/bin/snap', 'list', '--all'], text=True, capture_output=True, timeout=60)
+        if listing.returncode:
+            raise ValueError((listing.stderr.strip() or 'snap list failed')[-200:])
+        for name, rev in disabled_snaps(listing.stdout):
+            r = subprocess.run(['/usr/bin/snap', 'remove', name, '--revision', rev], text=True, capture_output=True, timeout=300)
+            done.append(f'{name} revision {rev}' + ('' if r.returncode == 0 else ': ' + (r.stderr.strip() or 'failed')[-120:]))
+    return {'cleanup': kind, 'done': done}
+
+
 # ---------- power profiles ----------
 # eco / balanced / performance: power-profiles-daemon profile (CPU energy preference), the CPU package power limits
 # (Intel RAPL PL1 sustained / PL2 burst) and the NVIDIA board power limit, derived from each machine's own
@@ -392,6 +439,8 @@ def main():
         print(json.dumps(set_profile(sys.argv[2])))
     elif command == 'smart' and len(sys.argv) == 3:
         print(json.dumps(smart(sys.argv[2])))
+    elif command == 'cleanup' and len(sys.argv) in (3, 4):
+        print(json.dumps(cleanup(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)))
     elif command == 'wake-time' and len(sys.argv) == 2:
         print(read_config()['wakeTime'])
     elif command == 'flag' and len(sys.argv) == 3 and sys.argv[2] in ('blockSsh', 'blockTmux'):
