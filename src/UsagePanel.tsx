@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpToLine, Check, CheckCheck, ChevronRight, Copy, FolderOpen, FolderSearch, Info, ListChecks, Lock, RefreshCw, Square, Trash2, X} from 'lucide-react';
+import {AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpToLine, Check, ChevronRight, FolderOpen, FolderSearch, Info, ListChecks, Lock, RefreshCw, Square, Trash2, X} from 'lucide-react';
 import {toast} from 'sonner';
 import {Panel, Empty} from './components/panels';
 import {ago, bytes, levelColor, levelFor, since} from './lib/format';
@@ -98,11 +98,9 @@ function sortRows(ch: UNode[], {key, dir}: Sort) {
 /** How a click selects: replace (plain), toggle one (Ctrl/Cmd, or select mode), or a range in list order (Shift). */
 type How = {add?: boolean; range?: boolean};
 type Pick = (rel: string[], how?: How) => void;
-/** Right-click (or the Menu key) on an item: `key` is its path relative to the folder shown. */
-type Menu = (e: React.MouseEvent | React.KeyboardEvent, key: string) => void;
 const howOf = (e: React.MouseEvent | React.KeyboardEvent): How => ({add: e.ctrlKey || e.metaKey, range: e.shiftKey});
 /** Click selects (details below), Ctrl/Cmd-click adds, double-click opens a folder. */
-function Treemap({node, mode, now, cats, selected, select, open, menu, hover, setHover}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick; menu: Menu;
+function Treemap({node, mode, now, cats, selected, select, open, hover, setHover}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick;
   hover: string | null; setHover: (key: string | null) => void}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({w: 0, h: 0});
@@ -129,11 +127,11 @@ function Treemap({node, mode, now, cats, selected, select, open, menu, hover, se
       const showLabel = r.w > 46 && r.h > 18;
       return <div key={c.k + c.n + i} role="listitem" className={`tm-tile kind-${c.k}${pickable ? ' pick' : ''}${nestable ? ' nested' : ''}${pickable && selected.has(c.n) ? ' selected' : ''}${pickable && hover === c.n ? ' hovered' : ''}`}
         style={{left: r.x, top: r.y, width: r.w, height: r.h, ...(nestable ? {} : {background: colorOf(c, mode, now, cats), color: ink(c, mode, now)})}}
-        aria-label={tip(c, node.d, now, cats).split('\n').slice(0, 2).join(', ')} onMouseEnter={() => setHover(pickable ? c.n : null)} onClick={pickable ? e => select([c.n], howOf(e)) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined} onContextMenu={pickable ? e => menu(e, c.n) : undefined}>
+        aria-label={tip(c, node.d, now, cats).split('\n').slice(0, 2).join(', ')} onMouseEnter={() => setHover(pickable ? c.n : null)} onClick={pickable ? e => select([c.n], howOf(e)) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}>
         {showLabel && <span className="tm-label"><strong>{c.k === 'locked' && <Lock size={10} />}{label(c)}</strong>{r.h > 34 && !nestable && <small>{bytes(c.d)}</small>}{nestable && <small>{bytes(c.d)}</small>}</span>}
         {inner.map((g, j) => { const q = innerRects[j]; const gd = g.k === 'dir', gp = !!g.n;
           return <div key={g.k + g.n + j} className={`tm-tile inner kind-${g.k}${gp ? ' pick' : ''}${gp && selected.has(c.n + '/' + g.n) ? ' selected' : ''}${gp && hover === c.n + '/' + g.n ? ' hovered' : ''}`} style={{left: q.x, top: q.y, width: q.w, height: q.h, background: colorOf(g, mode, now, cats), color: ink(g, mode, now)}}
-            onMouseEnter={e => { e.stopPropagation(); setHover(gp ? `${c.n}/${g.n}` : c.n); }} onMouseLeave={() => setHover(c.n)} onClick={e => { e.stopPropagation(); const h = howOf(e); select(gp ? [c.n, g.n] : [c.n], {add: h.add || h.range}); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }} onContextMenu={e => { e.stopPropagation(); menu(e, gp ? `${c.n}/${g.n}` : c.n); }}>
+            onMouseEnter={e => { e.stopPropagation(); setHover(gp ? `${c.n}/${g.n}` : c.n); }} onMouseLeave={() => setHover(c.n)} onClick={e => { e.stopPropagation(); const h = howOf(e); select(gp ? [c.n, g.n] : [c.n], {add: h.add || h.range}); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }}>
             {q.w > 46 && q.h > 16 && <span className="tm-label"><strong>{label(g)}</strong>{q.h > 30 && <small>{bytes(g.d)}</small>}</span>}
           </div>; })}
       </div>;
@@ -154,8 +152,6 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const [sel, setSel] = useState<{at: string; items: string[]; focus: string | null; anchor: string | null} | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [batch, setBatch] = useState<string[] | null>(null);
-  const [menu, setMenu] = useState<{id: number; x: number; y: number; keys: string[]; from: HTMLElement | null} | null>(null);
-  const menuId = useRef(0);
   const [hover, setHover] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>({key: 'size', dir: -1});
   // Narrow panel = details sit below the list (container query in CSS); a single pick then gets the selection bar.
@@ -289,34 +285,18 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const sizeOf = (key: string) => node ? findRel(node, key.split('/'))?.d ?? 0 : 0;
   const pickedBytes = picked.reduce((a, k) => a + sizeOf(k), 0);
   const fromMount = (key: string) => '/' + [...parts, ...key.split('/')].join('/');
-  /** Esc clears; Ctrl/Cmd-A selects the whole folder (not while typing in a field). */
-  /**
-   * Right-click: like a file manager, an item that is part of the selection keeps the selection; any other item
-   * becomes the selection. Touch long-press is left to select mode (it fires contextmenu too).
-   */
-  const openMenu: Menu = (e, key) => {
-    e.preventDefault();
-    if ('pointerType' in e.nativeEvent && (e.nativeEvent as PointerEvent).pointerType === 'touch') return;
-    const keys = pickedSet.has(key) ? picked : [key];
-    if (!pickedSet.has(key)) setSel({at: here, items: [key], focus: key, anchor: key});
-    const from = e.currentTarget as HTMLElement;
-    const r = from.getBoundingClientRect();
-    // From the keyboard (Menu key, Shift+F10) there is no pointer: open under the row's name.
-    const at = 'clientX' in e && (e.clientX || e.clientY) ? {x: e.clientX, y: e.clientY} : {x: r.left + 28, y: r.bottom - 2};
-    setMenu({id: ++menuId.current, ...at, keys, from});
-  };
-  /** Ctrl/Cmd+C, the menu's Copy path: the selected items' full paths, one per line. */
+  /** Ctrl/Cmd+C copies the selected items’ full paths, one per line. */
   const copyPaths = (keys: string[]) => navigator.clipboard.writeText(keys.map(absolute).join('\n'))
     .then(() => toast.success(keys.length === 1 ? 'Path copied' : `${keys.length} paths copied`, {description: keys.length === 1 ? absolute(keys[0]) : undefined}))
     .catch(() => toast.error('Could not copy to the clipboard'));
   const absolute = (key: string) => (mount === '/' ? '' : mount) + fromMount(key);
   /**
    * Esc clears, Delete deletes the selection, Ctrl/Cmd-A selects the whole folder: while focus is in this panel or on
-   * the page itself (it lands on the body when the focused button goes away), never while typing or in a dialog/menu.
+   * the page itself (it lands on the body when the focused button goes away), never while typing or in a dialog.
    */
   const onKeys = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
-    if (t.closest?.('input, textarea, select, [contenteditable=true], [role=dialog], [role=menu]') || document.querySelector('[role=dialog]')) return;
+    if (t.closest?.('input, textarea, select, [contenteditable=true], [role=dialog]') || document.querySelector('[role=dialog]')) return;
     if (t !== document.body && !panelRef.current?.contains(t)) return;
     if (e.key === 'Escape' && (picked.length || selectMode)) { e.preventDefault(); clear(); }
     else if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && picked.length && token && view === 'map') { e.preventDefault(); setBatch(picked.map(fromMount)); }
@@ -346,10 +326,13 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   </div>;
 
   return <Panel title="Disk usage" sub={sub} action={action} className="usage-panel">
-    <div className="usage-body" ref={panelRef} onClick={e => {
+    <div className="usage-body" ref={panelRef} onContextMenu={e => {
+      // Keep touch long-press selection free of the native menu; desktop and keyboard use the browser menu.
+      if ((e.nativeEvent as PointerEvent).pointerType === 'touch' && (e.target as HTMLElement).closest('.usage-row.pick, .tm-tile.pick')) e.preventDefault();
+    }} onClick={e => {
       // A click on blank space in the panel (not on an item, button or the details) clears the selection.
       const t = e.target as HTMLElement;
-      if (cur && !selectMode && !t.closest('button, a, input, .usage-row, .tm-tile, .usage-detail, .selection-bar, .item-menu, [role=dialog]')
+      if (cur && !selectMode && !t.closest('button, a, input, .usage-row, .tm-tile, .usage-detail, .selection-bar, [role=dialog]')
         && t.closest('.usage-body, .usage-summary, .usage-legend, .usage-listbar, .usage-toolbar') ) setSel(null);
     }}>
       {mounts && mounts.length > 1 && <div className="usage-mounts" role="tablist">{mounts.map(m => {
@@ -403,7 +386,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
         </div>
         <div className="usage-main">
           <div className={`usage-map${loading ? ' loading' : ''}`} aria-busy={loading}>
-            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={pickedSet} select={select} open={open} menu={openMenu} hover={hover} setHover={setHover} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
+            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={pickedSet} select={select} open={open} hover={hover} setHover={setHover} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
             <div className="usage-legend">
               {mode === 'age' ? <><span className="dim">Newest change:</span>{AGES.map(([, text, pct]) => <span key={text}><i style={{background: `color-mix(in srgb, var(--amber) ${pct}, var(--surface-2, #1b1c20))`}} />{text}</span>)}</>
                 : mode === 'growth' ? (tree?.meta?.previous ? GROWTH.slice(0, 5).map(([text, color]) => <span key={text}><i style={{background: color}} />{text}</span>) : <span className="dim">Rescan later to compare: growth is measured against the previous scan.</span>)
@@ -428,28 +411,8 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
               <span className="dim usage-keys">Ctrl-click to add, Shift-click for a range, Ctrl+A for all, Esc to clear.</span></>}
         </div>
         <UsageList node={node} rows={sorted} now={now} cats={cats} selected={pickedSet} select={select} open={openByKey} checks={selectMode || picked.length > 1}
-          longPress={k => { setSelectMode(true); select([k], {add: true}); }} menu={openMenu} hover={hover} setHover={setHover} sort={sort} setSort={setSort}
+          longPress={k => { setSelectMode(true); select([k], {add: true}); }} hover={hover} setHover={setHover} sort={sort} setSort={setSort}
           move={move} clear={() => picked.length && !selectMode && setSel(null)} />
-        {menu && (() => {
-          const one = menu.keys.length === 1 ? findRel(node, menu.keys[0].split('/')) : null;
-          const total = menu.keys.reduce((t, k) => t + sizeOf(k), 0);
-          return <ItemMenu key={menu.id} at={menu}
-            title={one ? {name: menu.keys[0].split('/').pop()! + (one.k === 'dir' ? '/' : ''), meta: bytes(one.d), color: TYPES[one.k]?.[1]} : {name: `${menu.keys.length} items`, meta: bytes(total)}}
-            // Escape or choosing an entry puts focus back on the item; a click elsewhere leaves focus where it went.
-            close={restore => {
-              const f = menu.from;
-              // A retiring menu's queued listener must not dismiss its replacement.
-              setMenu(current => current?.id === menu.id ? null : current);
-              if (restore && f?.isConnected) f.focus({preventScroll: true});
-            }}
-            groups={[
-              [...(one?.k === 'dir' ? [{icon: FolderOpen, label: 'Open', hint: 'Enter', run: () => open(menu.keys[0].split('/'))}] : []),
-                {icon: Copy, label: menu.keys.length === 1 ? 'Copy path' : `Copy ${menu.keys.length} paths`, hint: `${MOD}C`, run: () => copyPaths(menu.keys)},
-                {icon: CheckCheck, label: 'Select all', hint: `${MOD}A`, run: selectAll},
-                ...(menu.keys.length > 1 ? [{icon: X, label: 'Clear selection', hint: 'Esc', run: clear}] : [])],
-              token ? [{icon: Trash2, label: menu.keys.length === 1 ? 'Delete…' : `Delete ${menu.keys.length} items…`, hint: 'Del', danger: true, run: () => setBatch(menu.keys.map(fromMount))}] : [],
-            ]} />;
-        })()}
         {(picked.length > 1 || selectMode || (narrow && picked.length === 1)) && <div className="selection-bar" role="region" aria-label="Selection">
           {picked.length === 1 && !selectMode
             ? <><strong className="mono sb-name" title={picked[0]}>{picked[0].split('/').pop()}</strong><span className="dim">{bytes(pickedBytes)}</span></>
@@ -482,8 +445,8 @@ function forecastText(s?: Space | null) {
 const findRel = (node: UNode, rel: string[]) => rel.reduce<UNode | undefined>((n, p) => n?.ch?.find(c => c.n === p), node);
 
 /** The same data as a list: readable on phones, keyboard friendly, and shows the numbers the treemap only implies. */
-function UsageList({node, rows: all, now, cats, selected, select, open, checks, longPress, menu, hover, setHover, sort, setSort, move, clear}: {node: UNode; rows: UNode[]; now: number;
-  cats?: Categories; selected: Set<string>; select: Pick; open: Pick; checks: boolean; longPress: (name: string) => void; menu: Menu;
+function UsageList({node, rows: all, now, cats, selected, select, open, checks, longPress, hover, setHover, sort, setSort, move, clear}: {node: UNode; rows: UNode[]; now: number;
+  cats?: Categories; selected: Set<string>; select: Pick; open: Pick; checks: boolean; longPress: (name: string) => void;
   hover: string | null; setHover: (key: string | null) => void; sort: Sort; setSort: (s: Sort) => void;
   move: (from: string | null, step: number | 'home' | 'end', how: {range?: boolean; only?: boolean}) => void; clear: () => void}) {
   const [limit, setLimit] = useState(60);
@@ -497,11 +460,10 @@ function UsageList({node, rows: all, now, cats, selected, select, open, checks, 
     press.current.timer = setTimeout(() => { press.current.fired = true; navigator.vibrate?.(15); longPress(name); }, 500);
   };
   const endPress = () => clearTimeout(press.current.timer);
-  /** Rows are a single tab stop's worth of keys: arrows, Home/End, Enter opens, Space toggles, menu keys. */
+  /** Rows are a single tab stop's worth of keys: arrows, Home/End, Enter opens, Space toggles. */
   const onRowKey = (e: React.KeyboardEvent, c: UNode) => {
     const how = {range: e.shiftKey, only: e.ctrlKey || e.metaKey};
-    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menu(e, c.n);
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(c.n, e.key === 'ArrowDown' ? 1 : -1, how); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(c.n, e.key === 'ArrowDown' ? 1 : -1, how); }
     else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); move(c.n, e.key === 'Home' ? 'home' : 'end', how); }
     else if (e.key === 'Enter' && c.k === 'dir' && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); open([c.n]); }
     else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select([c.n], {add: e.key === ' ' || e.ctrlKey || e.metaKey, range: e.shiftKey}); }
@@ -520,7 +482,7 @@ function UsageList({node, rows: all, now, cats, selected, select, open, checks, 
         className={`usage-row kind-${c.k}${pickable ? ' pick' : ''}${on ? ' selected' : ''}${pickable && (hover === c.n || hover?.startsWith(c.n + '/')) ? ' hovered' : ''}`} tabIndex={pickable ? 0 : undefined}
         onMouseEnter={() => setHover(pickable ? c.n : null)}
         onClick={pickable ? e => { if (press.current.fired) { press.current.fired = false; return; } select([c.n], howOf(e)); } : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}
-        onPointerDown={pickable ? e => startPress(e, c.n) : undefined} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress} onContextMenu={pickable ? e => menu(e, c.n) : undefined}
+        onPointerDown={pickable ? e => startPress(e, c.n) : undefined} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress}
         onKeyDown={pickable ? e => onRowKey(e, c) : undefined}>
         <span className="name">{checks && <span className={`row-check${on ? ' on' : ''}`} aria-hidden="true">{on && <Check size={11} />}</span>}<i style={{background: TYPES[c.k]?.[1]}} />{c.k === 'locked' && <Lock size={11} />}<span className={c.n ? 'mono' : 'dim'}>{label(c)}{drill ? '/' : ''}</span>
           {cat && <small className="usage-cat" style={{color: VERDICTS[cat.verdict][1]}}>{cat.label}</small>}{c.h && <small className="dim">hardlink</small>}</span>
@@ -552,82 +514,4 @@ function SelectionSummary({node, items, bytes: total, remove, clear, del}: {node
     {del && <button className="button small danger-outline ud-delete" onClick={del}><Trash2 size={12} />Delete {items.length} items…</button>}
     <p className="dim ud-small">Each item is checked again before anything is deleted; any that can’t go are listed and left alone.</p>
   </aside>;
-}
-
-const MOD = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘' : 'Ctrl+';
-type MenuEntry = {icon: React.ElementType; label: string; hint?: string; run: () => void; danger?: boolean};
-
-/**
- * The right-click menu, in the manner of a desktop file manager's:
- *  - Says what it acts on (name and size, or "4 items · 13 GB"), groups entries, separates Delete, shows shortcuts.
- *  - Opens just off the pointer and flips left / up near the window's edges; it is measured before it is shown, so
- *    it never appears in one place and jumps to another, and it grows from the corner nearest the pointer.
- *  - Keyboard: focus starts on the first entry; arrows (wrapping), Home/End, typing a letter jumps to that entry;
- *    Enter runs; Esc or Tab closes and focus returns to the item. A click or right-click elsewhere just closes it
- *    (a right-click on another item opens that item's menu instead), and so do scrolling (wheel or touch), resizing or leaving the window.
- */
-function ItemMenu({at, title, groups, close}: {at: {x: number; y: number}; title: {name: string; meta: string; color?: string};
-  groups: MenuEntry[][]; close: (restoreFocus: boolean) => void}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(close);
-  useLayoutEffect(() => { closeRef.current = close; });
-  const [pos, setPos] = useState<{left: number; top: number; origin: string} | null>(null);
-  useLayoutEffect(() => {
-    const el = ref.current; if (!el) return;
-    const {width, height} = el.getBoundingClientRect(), pad = 8, gap = 2;
-    const right = at.x + gap + width <= window.innerWidth - pad, down = at.y + gap + height <= window.innerHeight - pad;
-    setPos({
-      left: right ? at.x + gap : Math.max(pad, at.x - gap - width),
-      top: down ? at.y + gap : Math.max(pad, at.y - gap - height),
-      origin: `${down ? 'top' : 'bottom'} ${right ? 'left' : 'right'}`,
-    });
-  }, [at.x, at.y]);
-  useEffect(() => { if (pos) ref.current?.querySelector<HTMLButtonElement>('[role=menuitem]')?.focus({preventScroll: true}); }, [pos]);
-  useEffect(() => {
-    // A right-button press elsewhere is followed by a contextmenu: an item's handler opens its own menu in place of this
-    // one (no close-then-reopen flicker, no focus thrown back to the old item); anywhere else, the contextmenu closes it.
-    const away = (e: Event) => { if ((e as PointerEvent).button !== 2 && !ref.current?.contains(e.target as Node)) closeRef.current(false); };
-    const other = (e: Event) => { if (!e.defaultPrevented && !ref.current?.contains(e.target as Node)) closeRef.current(false); };
-    // Only a scroll the user makes closes it (wheel, touch drag; a scrollbar drag starts with a pointerdown): the page
-    // also scrolls by itself when the selection changes the layout (scroll anchoring), which must not shut the menu.
-    const scroll = (e: Event) => { if (!ref.current?.contains(e.target as Node)) closeRef.current(false); };
-    const shut = () => closeRef.current(false);
-    window.addEventListener('pointerdown', away, true);
-    window.addEventListener('contextmenu', other);
-    window.addEventListener('wheel', scroll, {capture: true, passive: true});
-    window.addEventListener('touchmove', scroll, {capture: true, passive: true});
-    window.addEventListener('resize', shut);
-    window.addEventListener('blur', shut);
-    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('contextmenu', other); window.removeEventListener('wheel', scroll, true); window.removeEventListener('touchmove', scroll, true); window.removeEventListener('resize', shut); window.removeEventListener('blur', shut); };
-  }, []);
-  const onKey = (e: React.KeyboardEvent) => {
-    const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])];
-    const i = items.indexOf(document.activeElement as HTMLButtonElement);
-    const go = (j: number) => { e.preventDefault(); items[(j + items.length) % items.length]?.focus(); };
-    e.stopPropagation(); // the panel's own keys (Esc, Delete, Ctrl+A) must not act while the menu is open
-    if (e.key === 'Escape') { e.preventDefault(); close(true); }
-    else if (e.key === 'Tab') { e.preventDefault(); close(true); }
-    else if (e.key === 'ArrowDown') go(i + 1);
-    else if (e.key === 'ArrowUp') go(i - 1);
-    else if (e.key === 'Home') go(0);
-    else if (e.key === 'End') go(items.length - 1);
-    else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const k = e.key.toLowerCase(), order = [...items.slice(i + 1), ...items.slice(0, i + 1)];
-      const hit = order.find(b => b.dataset.label?.toLowerCase().startsWith(k));
-      if (hit) { e.preventDefault(); hit.focus(); }
-    }
-  };
-  const shown = groups.filter(g => g.length);
-  return <div ref={ref} className="item-menu" role="menu" aria-label={`${title.name}, ${title.meta}`} onKeyDown={onKey} onContextMenu={e => e.preventDefault()}
-    style={pos ? {left: pos.left, top: pos.top, transformOrigin: pos.origin} : {left: at.x, top: at.y, visibility: 'hidden'}} data-ready={pos ? '' : undefined}>
-    <div className="item-menu-head" aria-hidden="true">
-      {title.color && <i style={{background: title.color}} />}<span className="mono">{title.name}</span><span className="dim">{title.meta}</span>
-    </div>
-    {shown.map((g, gi) => <div key={gi} role="group" className="item-menu-group">
-      {gi > 0 && <div role="separator" className="item-menu-sep" />}
-      {g.map(({icon: Icon, label, hint, run, danger}) => <button key={label} role="menuitem" tabIndex={-1} data-label={label} className={danger ? 'danger' : ''} onClick={() => { close(true); run(); }}>
-        <Icon size={14} aria-hidden="true" /><span>{label}</span>{hint && <kbd aria-hidden="true">{hint}</kbd>}
-      </button>)}
-    </div>)}
-  </div>;
 }
