@@ -158,6 +158,8 @@ const server=http.createServer(async(req,res)=>{
   if(payload.action==='cleanup')return send(res,200,await cleanup.run(payload.tool,payload.arg));
   if(payload.action==='delete-prepare')return send(res,200,await usage.prepareDelete(payload.mount,payload.path));
   if(payload.action==='delete')return send(res,200,await usage.remove(payload.id,payload.mode,payload.password));
+  if(payload.action==='delete-prepare-many')return send(res,200,await usage.prepareMany(payload.mount,payload.paths));
+  if(payload.action==='delete-many')return send(res,200,await usage.removeMany(payload.id,payload.mode,payload.password));
   if(payload.action==='trash-restore')return send(res,200,await usage.trash.restore(payload.id));
   if(payload.action==='trash-purge')return send(res,200,await usage.trash.purge(payload.id,payload.password));
   return send(res,400,{error:'Unsupported action'});

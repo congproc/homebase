@@ -26,6 +26,14 @@ type Item = {
 };
 
 const when = (t: number | null | undefined, now: number) => t ? <span title={new Date(t).toLocaleString()}>{since(now - t)} <span className="dim">· {new Date(t).toLocaleDateString()}</span></span> : '—';
+/** The toast after a delete, for one item or a batch. */
+export function announceDelete(r: DeleteResult, label: string) {
+  if (!r.done) return;
+  const what = r.done === 1 && !r.failed ? label : `${r.done} item${r.done === 1 ? '' : 's'}`;
+  toast.success(r.mode === 'trash' ? `${what} moved to the trash` : `${what} deleted`, {description: [
+    r.mode === 'trash' ? 'Frees space once the trash is emptied. Restore from Cleanup → Trash.' : r.freed != null ? `${bytes(r.freed)} freed` : '',
+    r.failed ? `${r.failed} could not be deleted.` : ''].filter(Boolean).join(' ') || undefined});
+}
 const pct = (v: number) => v >= 0.1 ? `${(v * 100).toFixed(0)}%` : v >= 0.001 ? `${(v * 100).toFixed(1)}%` : '<0.1%';
 
 /** Everything known about one file or folder, to decide whether it can go. Shows the current folder when nothing is selected. */
@@ -102,8 +110,8 @@ export default function UsageDetail({mount, path, parentSize, now, scannedAt, on
     {/* Only a selected item, never the folder being browsed; the server makes the real decision when asked. */}
     {onClose && token && it.canDelete?.ok && !it.gone && it.kind !== 'mount' && cat?.verdict !== 'keep' &&
       <button className="button small danger-outline ud-delete" onClick={() => setDeleting(true)}><Trash2 size={12} />Delete…</button>}
-    {deleting && token && <DeleteDialog mount={mount} path={path} token={token} user={user} now={now} onClose={() => setDeleting(false)}
-      onDone={r => { setDeleting(false); toast.success(r.mode === 'trash' ? `${it.name} moved to the trash` : `${it.name} deleted`, {description: r.mode === 'trash' ? 'It frees space once the trash is emptied. Restore it from Cleanup → Trash.' : r.freed != null ? `${bytes(r.freed)} freed` : undefined}); onDeleted?.(r); }} />}
+    {deleting && token && <DeleteDialog mount={mount} paths={[path]} token={token} user={user} now={now} onClose={() => setDeleting(false)}
+      onDone={r => { setDeleting(false); announceDelete(r, it.name); onDeleted?.(r); }} />}
 
     {open && (open.items.length > 0 || open.hidden > 0) && <div className="ud-section">
       <h5><Cpu size={12} />In use</h5>

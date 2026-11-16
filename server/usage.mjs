@@ -256,7 +256,7 @@ export function createUsage({mountinfo = () => readFile('/proc/self/mountinfo', 
   // ---------- deleting ----------
   trashLog ??= createTrashLog({home});
   const pending = new Map();
-  const PENDING_MS = 5 * 60 * 1000;
+  const PENDING_MS = 5 * 60 * 1000, MAX_BATCH = 200;
 
   /** Removes a deleted path from the cached tree and its sizes from every ancestor, then saves the cache. */
   async function forget(mount, parts) {
@@ -291,57 +291,118 @@ export function createUsage({mountinfo = () => readFile('/proc/self/mountinfo', 
     }
   }
 
-  /** Step 1: everything the confirm dialog shows, and a short-lived id bound to the exact file that was checked. */
-  async function prepareDelete(mount, rel) {
+  /** Every check for one item, as the confirm dialog shows it; `big` decides whether a trash move needs the password. */
+  async function inspect(mount, rel, ctx) {
     const {target, entry, parts, node, full} = await locate(mount, rel);
     if (!entry) throw Error('Not scanned yet');
-    const all = (await mounts()).all.map(m => m.mount);
-    const check = await checkTarget({full, mountRoot: mount, mountpoints: all, swaps: await swaps(), protect, home, proc, ...(dpkg ? {dpkg} : {})});
-    const trash = check.st && !check.blocked.length ? await trashFor(check.st, mount, {home, create: false}) : null;
+    const check = await checkTarget({full, mountRoot: mount, mountpoints: ctx.all, swaps: ctx.swaps, protect, home, proc, ...(dpkg ? {dpkg} : {})});
+    const ok = !!check.st && !check.blocked.length;
+    const trash = ok ? await trashFor(check.st, mount, {home, create: false}) : null;
     // The scan may be old: a folder that grew since still needs the password, so look again (bounded) when it was small.
-    const big = node.d >= BIG.bytes || node.f >= BIG.files || (check.st && !check.blocked.length ? await exceedsLimits(full).catch(() => true) : false);
-    for (const [k, v] of pending) if (Date.now() - v.at > PENDING_MS) pending.delete(k);
-    const id = check.blocked.length ? null : newId();
-    if (id) pending.set(id, {mount, parts, full, fp: fingerprint(check.st), bytes: node.d, files: node.f, big, at: Date.now(), fstype: target.fstype});
-    return {id, path: full, name: parts.at(-1) || full, kind: node.k, bytes: node.d, files: node.f, newest: node.m || null, blocked: check.blocked, warnings: check.warnings,
-      trash: trash ? (trash.error ? {available: false, error: trash.error} : {available: true, location: trash.dir}) : null,
-      needsPassword: {trash: big, permanent: true}, trashDays, partial: !!node.p};
+    const big = node.d >= BIG.bytes || node.f >= BIG.files || (ok ? await exceedsLimits(full).catch(() => true) : false);
+    return {target, parts, node, full, check, ok, trash, big};
+  }
+  const context = async () => ({all: (await mounts()).all.map(m => m.mount), swaps: await swaps()});
+  const describeOne = ({parts, node, full, check, trash}) => ({path: full, name: parts.at(-1) || full, kind: node.k, bytes: node.d, files: node.f, newest: node.m || null,
+    blocked: check.blocked, warnings: check.warnings, partial: !!node.p,
+    trash: trash ? (trash.error ? {available: false, error: trash.error} : {available: true, location: trash.dir}) : null});
+  const sweep = () => { for (const [k, v] of pending) if (Date.now() - v.at > PENDING_MS) pending.delete(k); };
+
+  /** Re-checks one confirmed item, insists on the same file, then trashes or deletes it. Throws a user-facing reason. */
+  async function act(mount, it, mode, ctx) {
+    const check = await checkTarget({full: it.full, mountRoot: mount, mountpoints: ctx.all, swaps: ctx.swaps, protect, home, proc, ...(dpkg ? {dpkg} : {})});
+    if (check.blocked.length) throw Error(check.blocked[0]);
+    if (!sameFile(fingerprint(check.st), it.fp)) throw Error('It changed since you opened it. Rescan or open it again.');
+    let result;
+    if (mode === 'trash') {
+      const t = await trashFor(check.st, mount, {home});
+      if (t.error) throw Error(t.error);
+      const moved = await moveToTrash(it.full, t);
+      await trashLog.add({id: newId(), original: it.full, dir: t.dir, name: moved.name, dev: moved.dev, ino: moved.ino, at: Date.now(), bytes: it.bytes, files: it.files, mount});
+      record(`Moved to trash: ${it.full}`);
+      result = {trash: t.dir, name: moved.name};
+    } else {
+      await rm(it.full, {recursive: true, force: false});
+      record(`Deleted: ${it.full}`);
+      result = {};
+    }
+    await forget(mount, it.parts);
+    return result;
   }
 
-  /** Step 2: re-check everything, insist on the same file, then trash it or delete it for good. */
-  async function remove(id, mode, password) {
+  /** The password, when this is permanent or big; decided now, not from the scan or the dialog (it may have grown). */
+  async function authorize(mode, big, password) {
     if (mode !== 'trash' && mode !== 'permanent') throw Error('Unsupported delete mode');
-    const p = typeof id === 'string' && pending.get(id);
-    if (!p || Date.now() - p.at > PENDING_MS) throw Error('This confirmation expired. Open the item and try again.');
-    // Decided now, not from the scan or the dialog: the folder may have grown since.
-    const big = p.big || await exceedsLimits(p.full).catch(() => true);
     if (mode === 'permanent' || big) {
       if (!password) throw Error('Password required: this is a permanent delete or over 1 GB / 1,000 files');
       await verifyPassword(password);
     }
+  }
+
+  /** Step 1 (one item): everything the confirm dialog shows, and a short-lived id bound to the exact file that was checked. */
+  async function prepareDelete(mount, rel) {
+    const i = await inspect(mount, rel, await context());
+    sweep();
+    const id = i.ok ? newId() : null;
+    if (id) pending.set(id, {mount, items: [{parts: i.parts, full: i.full, fp: fingerprint(i.check.st), bytes: i.node.d, files: i.node.f, big: i.big}], big: i.big, at: Date.now()});
+    return {id, ...describeOne(i), needsPassword: {trash: i.big, permanent: true}, trashDays};
+  }
+
+  /** Step 2 (one item): re-check everything, insist on the same file, then trash it or delete it for good. */
+  async function remove(id, mode, password) {
+    const p = typeof id === 'string' && pending.get(id);
+    if (mode !== 'trash' && mode !== 'permanent') throw Error('Unsupported delete mode');
+    if (!p || p.items.length !== 1 || Date.now() - p.at > PENDING_MS) throw Error('This confirmation expired. Open the item and try again.');
+    const [it] = p.items;
+    await authorize(mode, p.big || await exceedsLimits(it.full).catch(() => true), password);
     pending.delete(id); // single use, and only after the password (a typo should not cost the confirmation)
-    const all = (await mounts()).all.map(m => m.mount);
-    const check = await checkTarget({full: p.full, mountRoot: p.mount, mountpoints: all, swaps: await swaps(), protect, home, proc, ...(dpkg ? {dpkg} : {})});
-    if (check.blocked.length) throw Error(check.blocked[0]);
-    if (!sameFile(fingerprint(check.st), p.fp)) throw Error('It changed since you opened it. Rescan or open it again.');
-    let result;
-    if (mode === 'trash') {
-      const t = await trashFor(check.st, p.mount, {home});
-      if (t.error) throw Error(t.error);
-      const moved = await moveToTrash(p.full, t);
-      await trashLog.add({id: newId(), original: p.full, dir: t.dir, name: moved.name, dev: moved.dev, ino: moved.ino, at: Date.now(), bytes: p.bytes, files: p.files, mount: p.mount});
-      record(`Moved to trash: ${p.full}`);
-      result = {mode, trash: t.dir, name: moved.name};
-    } else {
-      const before = await usedOn(p.mount);
-      await rm(p.full, {recursive: true, force: false});
-      const after = await usedOn(p.mount);
-      const freed = before != null && after != null ? Math.max(0, before - after) : null;
-      record(`Deleted: ${p.full}`);
-      result = {mode, freed};
+    const before = mode === 'permanent' ? await usedOn(p.mount) : null;
+    const result = await act(p.mount, it, mode, await context());
+    const after = mode === 'permanent' ? await usedOn(p.mount) : null;
+    return {mode, ...result, ...(mode === 'permanent' ? {freed: before != null && after != null ? Math.max(0, before - after) : null} : {})};
+  }
+
+  /**
+   * Step 1 (several items, one folder or across folders of one filesystem): checks each, drops any inside another
+   * selected folder (it goes with its parent), and returns one id for the items that may be deleted.
+   */
+  async function prepareMany(mount, rels) {
+    if (!Array.isArray(rels) || !rels.length || rels.length > MAX_BATCH) throw Error(`Select between 1 and ${MAX_BATCH} items`);
+    const paths = [...new Set(rels.map(r => '/' + segments(r).join('/')))];
+    const inside = (p, q) => q !== '/' && p.startsWith(q + '/');
+    const kept = paths.filter(p => !paths.some(q => q !== p && (inside(p, q) || q === '/')));
+    const ctx = await context(), checked = [];
+    for (const rel of kept) checked.push(await inspect(mount, rel, ctx)); // one at a time: each check walks /proc
+    const ok = checked.filter(i => i.ok);
+    const bytes = ok.reduce((a, i) => a + i.node.d, 0), files = ok.reduce((a, i) => a + i.node.f, 0);
+    const big = bytes >= BIG.bytes || files >= BIG.files || ok.some(i => i.big);
+    sweep();
+    const id = ok.length ? newId() : null;
+    if (id) pending.set(id, {mount, items: ok.map(i => ({parts: i.parts, full: i.full, fp: fingerprint(i.check.st), bytes: i.node.d, files: i.node.f, big: i.big})), big, at: Date.now()});
+    return {id, items: checked.map(describeOne), merged: paths.length - kept.length, total: {bytes, files, count: ok.length}, blockedCount: checked.length - ok.length,
+      trash: {available: ok.length > 0 && ok.every(i => i.trash && !i.trash.error)}, needsPassword: {trash: big, permanent: true}, trashDays};
+  }
+
+  /** Step 2 (several): one password for the batch, then each item re-checked and acted on; per-item results. */
+  async function removeMany(id, mode, password) {
+    const p = typeof id === 'string' && pending.get(id);
+    if (mode !== 'trash' && mode !== 'permanent') throw Error('Unsupported delete mode');
+    if (!p || Date.now() - p.at > PENDING_MS) throw Error('This confirmation expired. Select the items and try again.');
+    let big = p.big;
+    for (const it of p.items) { if (big) break; big = await exceedsLimits(it.full).catch(() => true); }
+    if (!big) big = p.items.reduce((a, it) => a + it.bytes, 0) >= BIG.bytes;
+    await authorize(mode, big, password);
+    pending.delete(id);
+    const ctx = await context();
+    const before = mode === 'permanent' ? await usedOn(p.mount) : null;
+    const results = [];
+    for (const it of p.items) {
+      try { await act(p.mount, it, mode, ctx); results.push({path: it.full, ok: true, bytes: it.bytes}); }
+      catch (e) { results.push({path: it.full, ok: false, error: e.message}); }
     }
-    await forget(p.mount, p.parts);
-    return result;
+    const after = mode === 'permanent' ? await usedOn(p.mount) : null;
+    return {mode, results, done: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length,
+      ...(mode === 'permanent' ? {freed: before != null && after != null ? Math.max(0, before - after) : null} : {})};
   }
 
   const trash = {
@@ -365,5 +426,5 @@ export function createUsage({mountinfo = () => readFile('/proc/self/mountinfo', 
   const targets = async () => (await mounts()).targets;
   const scanMeta = async mount => (await target(mount), await metaOf(mount));
 
-  return {list, targets, scanMeta, start, cancel, tree, item, candidates, growth, prepareDelete, remove, trash, stopAll: () => { for (const j of jobs.values()) j.child.kill('SIGTERM'); }};
+  return {list, targets, scanMeta, start, cancel, tree, item, candidates, growth, prepareDelete, prepareMany, removeMany, remove, trash, stopAll: () => { for (const j of jobs.values()) j.child.kill('SIGTERM'); }};
 }

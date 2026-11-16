@@ -265,3 +265,52 @@ test('verifyOwnPassword: input on stdin, limiter shared and reset on success', a
     assert.equal(messages.filter(m => /Too many wrong passwords/.test(m)).length, 3);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+test('batch delete: nested items merge, blocked ones are listed, one password for a big batch, per-item results', async () => {
+  const root = tmp('hb-batch-'), cache = tmp('hb-batch-cache-');
+  try {
+    const home = join(root, 'home');
+    mkdirSync(join(home, '.local/share'), {recursive: true});
+    for (const [d, n] of [['a', 600], ['b', 500]]) { mkdirSync(join(home, d, 'sub'), {recursive: true}); for (let i = 0; i < n; i++) writeFileSync(join(home, d, `f${i}`), 'x'); }
+    mkdirSync(join(home, '.ssh'));
+    writeFileSync(join(home, '.ssh/id'), 'k');
+    writeFileSync(join(home, 'c.bin'), Buffer.alloc(2 * MiB, 1));
+    writeFileSync(join(home, 'd.bin'), Buffer.alloc(2 * MiB, 1));
+    const passwords = [], events = [];
+    const u = createUsage({mountinfo: async () => `29 1 8:1 / ${root} rw - ext4 /dev/x rw`, cacheOf: () => join(cache, 'c.json.gz'), record: e => events.push(e),
+      home, protect: [], dpkg: noDpkg, proc: join(root, 'noproc'), trashLog: createTrashLog({file: join(root, 'trash.json'), home, mountpoints: async () => [root]}), trashDays: 0,
+      verifyPassword: async p => { passwords.push(p); if (p !== 'right') throw Error('Incorrect password'); }});
+    await u.start(root);
+    for (let i = 0; i < 200 && !events.some(e => e.includes('finished')); i++) await new Promise(r => setTimeout(r, 50));
+
+    const p = await u.prepareMany(root, ['/home/a', '/home/a/sub', '/home/b', '/home/.ssh', '/home/a']);
+    assert.equal(p.merged, 1, 'a/sub goes with a, and the duplicate a counts once');
+    assert.deepEqual(p.items.map(i => [i.name, i.blocked.length > 0]), [['a', false], ['b', false], ['.ssh', true]]);
+    assert.equal(p.total.count, 2);
+    assert.ok(p.total.files >= 1100);
+    assert.deepEqual(p.needsPassword, {trash: true, permanent: true}, '600 + 500 files: each is small, the batch is not');
+    await assert.rejects(u.removeMany(p.id, 'trash'), /Password required/);
+    await assert.rejects(u.removeMany(p.id, 'trash', 'wrong'), /Incorrect password/);
+    const r = await u.removeMany(p.id, 'trash', 'right');
+    assert.deepEqual([r.done, r.failed], [2, 0]);
+    assert.ok(!existsSync(join(home, 'a')) && !existsSync(join(home, 'b')) && existsSync(join(home, '.ssh/id')));
+    await assert.rejects(u.removeMany(p.id, 'trash', 'right'), /expired/, 'single use');
+
+    // Small batch: no password for the trash. One item changes after confirming: only that one fails.
+    const q = await u.prepareMany(root, ['/home/c.bin', '/home/d.bin']);
+    assert.deepEqual(q.needsPassword, {trash: false, permanent: true});
+    appendFileSync(join(home, 'd.bin'), 'more');
+    utimesSync(join(home, 'd.bin'), new Date(2001, 1, 1), new Date(2001, 1, 1));
+    const s = await u.removeMany(q.id, 'trash');
+    assert.deepEqual(s.results.map(x => [x.path.split('/').pop(), x.ok]), [['c.bin', true], ['d.bin', false]]);
+    assert.match(s.results[1].error, /changed since you opened it/);
+    assert.equal((await u.trash.list()).items.length, 3);
+    const tree = (await u.tree(root, '/home', 1)).node.ch.map(c => c.n);
+    assert.ok(!tree.includes('a') && !tree.includes('c.bin') && tree.includes('d.bin'), 'the cached tree drops only what went');
+
+    await assert.rejects(u.prepareMany(root, []), /Select between/);
+    await assert.rejects(u.prepareMany(root, Array.from({length: 201}, (_, i) => `/home/x${i}`)), /Select between/);
+    assert.equal((await u.prepareMany(root, ['/home/.ssh'])).id, null, 'nothing deletable, no confirmation');
+    assert.deepEqual(passwords, ['wrong', 'right']);
+  } finally { rmSync(root, {recursive: true, force: true}); rmSync(cache, {recursive: true, force: true}); }
+});

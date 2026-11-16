@@ -1,9 +1,10 @@
 import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {AlertTriangle, ArrowRight, ChevronRight, FolderSearch, Lock, RefreshCw, Square} from 'lucide-react';
+import {AlertTriangle, ArrowRight, Check, CheckCheck, ChevronRight, Copy, FolderOpen, FolderSearch, ListChecks, Lock, RefreshCw, Square, Trash2, X} from 'lucide-react';
 import {toast} from 'sonner';
 import {Panel, Empty} from './components/panels';
 import {ago, bytes, levelColor, levelFor, since} from './lib/format';
-import UsageDetail, {VERDICTS, type Categories} from './UsageDetail';
+import UsageDetail, {VERDICTS, announceDelete, type Categories} from './UsageDetail';
+import DeleteDialog from './DeleteDialog';
 import UsageCleanup from './UsageCleanup';
 
 /** Compact node from /api/storage/tree (see server/usage-scan.mjs). */
@@ -84,9 +85,14 @@ function tiles(node: UNode): UNode[] {
   return keep;
 }
 
-type Pick = (rel: string[]) => void;
-/** Click selects (details below), double-click opens a folder. */
-function Treemap({node, mode, now, cats, selected, select, open}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: string; select: Pick; open: Pick}) {
+/** How a click selects: replace (plain), toggle one (Ctrl/Cmd, or select mode), or a range in list order (Shift). */
+type How = {add?: boolean; range?: boolean};
+type Pick = (rel: string[], how?: How) => void;
+/** Right-click (or the Menu key) on an item: `key` is its path relative to the folder shown. */
+type Menu = (e: React.MouseEvent | React.KeyboardEvent, key: string) => void;
+const howOf = (e: React.MouseEvent | React.KeyboardEvent): How => ({add: e.ctrlKey || e.metaKey, range: e.shiftKey});
+/** Click selects (details below), Ctrl/Cmd-click adds, double-click opens a folder. */
+function Treemap({node, mode, now, cats, selected, select, open, menu}: {node: UNode; mode: ColorMode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick; menu: Menu}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({w: 0, h: 0});
   useLayoutEffect(() => {
@@ -104,13 +110,13 @@ function Treemap({node, mode, now, cats, selected, select, open}: {node: UNode; 
       const inner = nestable ? tiles(c) : [];
       const innerRects = nestable ? squarify(inner.map(g => g.d), {x: PAD, y: HEAD, w: r.w - PAD * 2, h: r.h - HEAD - PAD}) : [];
       const showLabel = r.w > 46 && r.h > 18;
-      return <div key={c.k + c.n + i} role="listitem" className={`tm-tile kind-${c.k}${pickable ? ' pick' : ''}${nestable ? ' nested' : ''}${pickable && selected === c.n ? ' selected' : ''}`}
+      return <div key={c.k + c.n + i} role="listitem" className={`tm-tile kind-${c.k}${pickable ? ' pick' : ''}${nestable ? ' nested' : ''}${pickable && selected.has(c.n) ? ' selected' : ''}`}
         style={{left: r.x, top: r.y, width: r.w, height: r.h, ...(nestable ? {} : {background: colorOf(c, mode, now, cats), color: ink(c, mode, now)})}}
-        title={tip(c, node.d, now, cats)} onClick={pickable ? () => select([c.n]) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}>
+        title={tip(c, node.d, now, cats)} onClick={pickable ? e => select([c.n], howOf(e)) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined} onContextMenu={pickable ? e => menu(e, c.n) : undefined}>
         {showLabel && <span className="tm-label"><strong>{c.k === 'locked' && <Lock size={10} />}{label(c)}</strong>{r.h > 34 && !nestable && <small>{bytes(c.d)}</small>}{nestable && <small>{bytes(c.d)}</small>}</span>}
         {inner.map((g, j) => { const q = innerRects[j]; const gd = g.k === 'dir', gp = !!g.n;
-          return <div key={g.k + g.n + j} className={`tm-tile inner kind-${g.k}${gp ? ' pick' : ''}${gp && selected === c.n + '/' + g.n ? ' selected' : ''}`} style={{left: q.x, top: q.y, width: q.w, height: q.h, background: colorOf(g, mode, now, cats), color: ink(g, mode, now)}}
-            title={`${c.n}/${tip(g, c.d, now, cats)}`} onClick={e => { e.stopPropagation(); select(gp ? [c.n, g.n] : [c.n]); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }}>
+          return <div key={g.k + g.n + j} className={`tm-tile inner kind-${g.k}${gp ? ' pick' : ''}${gp && selected.has(c.n + '/' + g.n) ? ' selected' : ''}`} style={{left: q.x, top: q.y, width: q.w, height: q.h, background: colorOf(g, mode, now, cats), color: ink(g, mode, now)}}
+            title={`${c.n}/${tip(g, c.d, now, cats)}`} onClick={e => { e.stopPropagation(); const h = howOf(e); select(gp ? [c.n, g.n] : [c.n], {add: h.add || h.range}); }} onDoubleClick={e => { e.stopPropagation(); if (gd) open([c.n, g.n]); else if (drill) open([c.n]); }} onContextMenu={e => { e.stopPropagation(); menu(e, gp ? `${c.n}/${g.n}` : c.n); }}>
             {q.w > 46 && q.h > 16 && <span className="tm-label"><strong>{label(g)}</strong>{q.h > 30 && <small>{bytes(g.d)}</small>}</span>}
           </div>; })}
       </div>;
@@ -126,7 +132,19 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const [tree, setTree] = useState<TreeResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ColorMode>('category');
-  const [sel, setSel] = useState<{at: string; rel: string[]} | null>(null);
+  // Selection, per folder: `items` are paths relative to the folder being shown ("a" or "a/b" from the treemap's inner
+  // tiles); `focus` is the one whose details are shown; `anchor` is where a Shift-click range starts.
+  const [sel, setSel] = useState<{at: string; items: string[]; focus: string | null; anchor: string | null} | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [batch, setBatch] = useState<string[] | null>(null);
+  const [menu, setMenu] = useState<{x: number; y: number; keys: string[]; from: HTMLElement | null} | null>(null);
+  // Selection keys are listened for on the document (see onKeys); the ref always holds this render's handler.
+  const keysRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  useEffect(() => {
+    const onDoc = (e: KeyboardEvent) => keysRef.current(e);
+    document.addEventListener('keydown', onDoc);
+    return () => document.removeEventListener('keydown', onDoc);
+  }, []);
   const [view, setView] = useState<'map' | 'cleanup'>('map');
   // Bumped after a delete: the server already took the item off its cached tree, so just fetch again.
   const [version, setVersion] = useState(0);
@@ -166,21 +184,78 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
   const go = (to: string[]) => setPath('/' + to.join('/'));
   const open = (rel: string[]) => go([...parts, ...rel]);
   // A selection belongs to the folder it was made in; opening another folder shows that folder's own details.
-  const rel = sel && sel.at === `${mount}:${path}` ? sel.rel : [];
-  const select = (r: string[]) => {
-    const at = `${mount}:${path}`, same = !!sel && sel.at === at && sel.rel.join('/') === r.join('/');
-    setSel(same ? null : {at, rel: r});
-    // On touch screens the details sit below the list (see .usage-main in CSS): bring them into view. Not with a mouse,
-    // where moving the page between the two clicks of a double-click would open the wrong folder.
-    if (!same && window.matchMedia('(max-width: 1180px) and (pointer: coarse)').matches)
+  const here = `${mount}:${path}`;
+  const cur = sel && sel.at === here ? sel : null;
+  const picked = cur?.items ?? [];
+  const pickedSet = new Set(picked);
+  const rel = cur?.focus ? cur.focus.split('/') : [];
+  const node = tree?.node, cats = tree?.categories;
+  const order = (node?.ch || []).filter(c => c.n).map(c => c.n);
+  const select = (r: string[], how: How = {}) => {
+    const key = r.join('/'), p = cur ?? {at: here, items: [], focus: null, anchor: null};
+    let next: typeof sel;
+    if (how.range && p.anchor && order.includes(p.anchor) && order.includes(key)) {
+      const [a, b] = [order.indexOf(p.anchor), order.indexOf(key)].sort((x, y) => x - y);
+      next = {...p, items: order.slice(a, b + 1), focus: key};
+    } else if (how.add || how.range || selectMode) {
+      if (p.items.includes(key)) {
+        const items = p.items.filter(x => x !== key);
+        next = items.length ? {...p, items, focus: items.at(-1)!, anchor: key} : null;
+      } else {
+        const outer = p.items.find(x => key.startsWith(x + '/'));
+        if (outer) { toast.info(`Already included: it is inside ${outer.split('/').pop()}, which is selected`); return; }
+        // A folder replaces anything already selected inside it.
+        next = {...p, items: [...p.items.filter(x => !x.startsWith(key + '/')), key], focus: key, anchor: key};
+      }
+    } else {
+      next = p.items.length === 1 && p.items[0] === key ? null : {at: here, items: [key], focus: key, anchor: key};
+    }
+    setSel(next);
+    // On touch screens the details sit below the list (see .usage-main in CSS): bring them into view for a single
+    // pick. Not with a mouse, where moving the page between the two clicks of a double-click would open the wrong folder.
+    if (next?.items.length === 1 && !selectMode && window.matchMedia('(max-width: 1180px) and (pointer: coarse)').matches)
       requestAnimationFrame(() => panelRef.current?.querySelector('.usage-detail')?.scrollIntoView({behavior: 'smooth', block: 'start'}));
   };
-  const node = tree?.node, cats = tree?.categories;
+  const selectAll = () => order.length && setSel({at: here, items: order, focus: order.at(-1)!, anchor: order[0]});
+  const clear = () => { setSel(null); setSelectMode(false); };
+  const sizeOf = (key: string) => node ? findRel(node, key.split('/'))?.d ?? 0 : 0;
+  const pickedBytes = picked.reduce((a, k) => a + sizeOf(k), 0);
+  const fromMount = (key: string) => '/' + [...parts, ...key.split('/')].join('/');
+  /** Esc clears; Ctrl/Cmd-A selects the whole folder (not while typing in a field). */
+  /**
+   * Right-click: like a file manager, an item that is part of the selection keeps the selection; any other item
+   * becomes the selection. Touch long-press is left to select mode (it fires contextmenu too).
+   */
+  const openMenu: Menu = (e, key) => {
+    e.preventDefault();
+    if ('pointerType' in e.nativeEvent && (e.nativeEvent as PointerEvent).pointerType === 'touch') return;
+    const keys = pickedSet.has(key) ? picked : [key];
+    if (!pickedSet.has(key)) setSel({at: here, items: [key], focus: key, anchor: key});
+    const from = e.currentTarget as HTMLElement;
+    const r = from.getBoundingClientRect();
+    const at = 'clientX' in e && (e.clientX || e.clientY) ? {x: e.clientX, y: e.clientY} : {x: r.left + 24, y: r.bottom - 4};
+    setMenu({...at, keys, from});
+  };
+  const absolute = (key: string) => (mount === '/' ? '' : mount) + fromMount(key);
+  /**
+   * Esc clears, Delete deletes the selection, Ctrl/Cmd-A selects the whole folder: while focus is in this panel or on
+   * the page itself (it lands on the body when the focused button goes away), never while typing or in a dialog/menu.
+   */
+  const onKeys = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest?.('input, textarea, select, [contenteditable=true], [role=dialog], [role=menu]') || document.querySelector('[role=dialog]')) return;
+    if (t !== document.body && !panelRef.current?.contains(t)) return;
+    if (e.key === 'Escape' && (picked.length || selectMode)) { e.preventDefault(); clear(); }
+    else if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && picked.length && token && view === 'map') { e.preventDefault(); setBatch(picked.map(fromMount)); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view === 'map' && order.length) { e.preventDefault(); selectAll(); }
+  };
+  useLayoutEffect(() => { keysRef.current = onKeys; });
   /** From the cleanup list: open the item's folder in the map and select the item. */
   const show = (abs: string) => {
     const relParts = (mount === '/' ? abs : abs.slice((mount || '').length)).split('/').filter(Boolean);
     const parent = '/' + relParts.slice(0, -1).join('/');
-    setPath(parent); setSel({at: `${mount}:${parent}`, rel: relParts.slice(-1)}); setView('map');
+    const key = relParts.at(-1)!;
+    setPath(parent); setSel({at: `${mount}:${parent}`, items: [key], focus: key, anchor: key}); setView('map');
     requestAnimationFrame(() => panelRef.current?.scrollIntoView({behavior: 'smooth', block: 'start'}));
   };
 
@@ -247,7 +322,7 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
         </div>
         <div className="usage-main">
           <div className={`usage-map${loading ? ' loading' : ''}`} aria-busy={loading}>
-            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={rel.join('/')} select={select} open={open} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
+            {node.ch?.length ? <Treemap node={node} mode={mode} now={now} cats={cats} selected={pickedSet} select={select} open={open} menu={openMenu} /> : <Empty compact icon={FolderSearch} title="Nothing large inside">{node.k === 'locked' ? 'This folder could not be read.' : 'Everything here is under 1 MB.'}</Empty>}
             <div className="usage-legend">
               {mode === 'age' ? <><span className="dim">Newest change:</span>{AGES.map(([, text, pct]) => <span key={text}><i style={{background: `color-mix(in srgb, var(--amber) ${pct}, var(--surface-2, #1b1c20))`}} />{text}</span>)}</>
                 : mode === 'growth' ? (tree?.meta?.previous ? GROWTH.slice(0, 5).map(([text, color]) => <span key={text}><i style={{background: color}} />{text}</span>) : <span className="dim">Rescan later to compare: growth is measured against the previous scan.</span>)
@@ -256,11 +331,36 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
               <span className="dim usage-hint">Area is space on disk. Select for details; double-click a folder, or use →, to open it.</span>
             </div>
           </div>
-          {mount && <UsageDetail mount={mount} path={'/' + [...parts, ...rel].join('/')} parentSize={rel.length ? node.d : null} now={now} scannedAt={scannedAt}
-            onOpen={rel.length && findRel(node, rel)?.k === 'dir' ? () => open(rel) : undefined} onClose={rel.length ? () => setSel(null) : undefined}
-            token={token} user={user} onDeleted={() => { setSel(null); setVersion(v => v + 1); }} />}
+          {mount && (picked.length > 1
+            ? <SelectionSummary node={node} items={picked} bytes={pickedBytes} remove={k => select(k.split('/'), {add: true})} clear={clear} del={token ? () => setBatch(picked.map(fromMount)) : undefined} />
+            : <UsageDetail mount={mount} path={'/' + [...parts, ...rel].join('/')} parentSize={rel.length ? node.d : null} now={now} scannedAt={scannedAt}
+              onOpen={rel.length && findRel(node, rel)?.k === 'dir' ? () => open(rel) : undefined} onClose={rel.length ? clear : undefined}
+              token={token} user={user} onDeleted={() => { clear(); setVersion(v => v + 1); }} />)}
         </div>
-        <UsageList node={node} now={now} cats={cats} selected={rel.join('/')} select={select} open={open} />
+        <div className="usage-listbar">
+          {selectMode
+            ? <><button className="button small" onClick={() => setSelectMode(false)}><Check size={12} />Done</button><button className="button small" onClick={selectAll}>Select all</button>
+              <span className="dim">Tap items to add or remove them.</span></>
+            : <><button className="button small" onClick={() => setSelectMode(true)}><ListChecks size={12} />Select</button>
+              <span className="dim usage-keys">Ctrl-click to add, Shift-click for a range, Ctrl+A for all, Esc to clear.</span></>}
+        </div>
+        <UsageList node={node} now={now} cats={cats} selected={pickedSet} select={select} open={open} checks={selectMode || picked.length > 1}
+          longPress={k => { setSelectMode(true); select([k], {add: true}); }} menu={openMenu} />
+        {menu && <ItemMenu at={menu} count={menu.keys.length} close={() => { const f = menu.from; setMenu(null); f?.focus?.(); }} items={[
+          ...(menu.keys.length === 1 && findRel(node, menu.keys[0].split('/'))?.k === 'dir' ? [{icon: FolderOpen, label: 'Open', run: () => open(menu.keys[0].split('/'))}] : []),
+          {icon: Copy, label: menu.keys.length === 1 ? 'Copy path' : `Copy ${menu.keys.length} paths`, run: () => navigator.clipboard.writeText(menu.keys.map(absolute).join('\n'))
+            .then(() => toast.success(menu.keys.length === 1 ? 'Path copied' : 'Paths copied')).catch(() => toast.error('Could not copy'))},
+          {icon: CheckCheck, label: 'Select all', run: selectAll},
+          ...(token ? [{icon: Trash2, label: menu.keys.length === 1 ? 'Delete…' : `Delete ${menu.keys.length} items…`, danger: true, run: () => setBatch(menu.keys.map(fromMount))}] : []),
+        ]} />}
+        {(picked.length > 1 || selectMode) && <div className="selection-bar" role="region" aria-label="Selection">
+          <strong>{picked.length} selected</strong><span className="dim">{bytes(pickedBytes)}</span>
+          <span className="spacer" />
+          <button className="button small" onClick={clear}><X size={12} />Clear</button>
+          <button className="button small danger-outline" disabled={!picked.length || !token} onClick={() => setBatch(picked.map(fromMount))}><Trash2 size={12} />Delete…</button>
+        </div>}
+        {batch && token && mount && <DeleteDialog mount={mount} paths={batch} token={token} user={user} now={now} onClose={() => setBatch(null)}
+          onDone={r => { setBatch(null); announceDelete(r, batch.length === 1 ? batch[0].split('/').pop()! : `${batch.length} items`); clear(); setVersion(v => v + 1); }} />}
       </>}
     </div>
   </Panel>;
@@ -278,17 +378,27 @@ function forecastText(s?: Space | null) {
 const findRel = (node: UNode, rel: string[]) => rel.reduce<UNode | undefined>((n, p) => n?.ch?.find(c => c.n === p), node);
 
 /** The same data as a list: readable on phones, keyboard friendly, and shows the numbers the treemap only implies. */
-function UsageList({node, now, cats, selected, select, open}: {node: UNode; now: number; cats?: Categories; selected: string; select: Pick; open: Pick}) {
+function UsageList({node, now, cats, selected, select, open, checks, longPress, menu}: {node: UNode; now: number; cats?: Categories; selected: Set<string>; select: Pick; open: Pick;
+  checks: boolean; longPress: (name: string) => void; menu: Menu}) {
   const rows = (node.ch || []).slice(0, 60);
   const max = rows[0]?.d || 1;
-  return <div className="usage-list" role="table" aria-label="Largest items">
+  // Long-press (touch) starts selecting several; the click that follows the press must not also toggle.
+  const press = useRef<{timer?: ReturnType<typeof setTimeout>; fired?: boolean}>({});
+  const startPress = (e: React.PointerEvent, name: string) => {
+    if (e.pointerType !== 'touch') return;
+    press.current.fired = false;
+    press.current.timer = setTimeout(() => { press.current.fired = true; navigator.vibrate?.(15); longPress(name); }, 500);
+  };
+  const endPress = () => clearTimeout(press.current.timer);
+  return <div className={`usage-list${checks ? ' checking' : ''}`} role="table" aria-label="Largest items" aria-multiselectable="true">
     <div className="usage-row head" role="row"><span>Name</span><span>Size</span><span>Share</span><span>Files</span><span>Newest change</span><span /></div>
     {rows.map((c, i) => {
-      const drill = c.k === 'dir', pickable = !!c.n, cat = c.t ? cats?.[c.t] : undefined;
-      return <div key={c.k + c.n + i} role="row" className={`usage-row kind-${c.k}${pickable ? ' pick' : ''}${pickable && selected === c.n ? ' selected' : ''}`} tabIndex={pickable ? 0 : undefined} title={tip(c, node.d, now, cats)}
-        onClick={pickable ? () => select([c.n]) : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}
-        onKeyDown={pickable ? e => { if (e.key === 'Enter' && drill) open([c.n]); else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select([c.n]); } } : undefined}>
-        <span className="name"><i style={{background: TYPES[c.k]?.[1]}} />{c.k === 'locked' && <Lock size={11} />}<span className={c.n ? 'mono' : 'dim'}>{label(c)}{drill ? '/' : ''}</span>
+      const drill = c.k === 'dir', pickable = !!c.n, cat = c.t ? cats?.[c.t] : undefined, on = pickable && selected.has(c.n);
+      return <div key={c.k + c.n + i} role="row" aria-selected={pickable ? on : undefined} className={`usage-row kind-${c.k}${pickable ? ' pick' : ''}${on ? ' selected' : ''}`} tabIndex={pickable ? 0 : undefined} title={tip(c, node.d, now, cats)}
+        onClick={pickable ? e => { if (press.current.fired) { press.current.fired = false; return; } select([c.n], howOf(e)); } : undefined} onDoubleClick={drill ? () => open([c.n]) : undefined}
+        onPointerDown={pickable ? e => startPress(e, c.n) : undefined} onPointerUp={endPress} onPointerLeave={endPress} onPointerCancel={endPress} onContextMenu={pickable ? e => menu(e, c.n) : undefined}
+        onKeyDown={pickable ? e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menu(e, c.n); else if (e.key === 'Enter' && drill && !e.shiftKey && !e.ctrlKey && !e.metaKey) open([c.n]); else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select([c.n], howOf(e)); } } : undefined}>
+        <span className="name">{checks && <span className={`row-check${on ? ' on' : ''}`} aria-hidden="true">{on && <Check size={11} />}</span>}<i style={{background: TYPES[c.k]?.[1]}} />{c.k === 'locked' && <Lock size={11} />}<span className={c.n ? 'mono' : 'dim'}>{label(c)}{drill ? '/' : ''}</span>
           {cat && <small className="usage-cat" style={{color: VERDICTS[cat.verdict][1]}}>{cat.label}</small>}{c.h && <small className="dim">hardlink</small>}</span>
         <span>{bytes(c.d)}</span>
         <span className="share"><span className="meter small"><span style={{width: `${Math.max(1, c.d / max * 100)}%`}} /></span>{node.d ? `${(c.d / node.d * 100).toFixed(1)}%` : ''}</span>
@@ -298,5 +408,62 @@ function UsageList({node, now, cats, selected, select, open}: {node: UNode; now:
       </div>;
     })}
     {(node.c ?? 0) > rows.length && <div className="usage-row more dim" role="row"><span>Showing the largest {rows.length} of {node.c?.toLocaleString()} items</span></div>}
+  </div>;
+}
+
+/** In place of the detail panel when several items are selected: what is in the selection, and the way to delete it. */
+function SelectionSummary({node, items, bytes: total, remove, clear, del}: {node: UNode; items: string[]; bytes: number; remove: (key: string) => void; clear: () => void; del?: () => void}) {
+  const rows = items.map(k => ({k, n: findRel(node, k.split('/'))})).sort((a, b) => (b.n?.d ?? 0) - (a.n?.d ?? 0));
+  const files = rows.reduce((a, r) => a + (r.n?.f ?? 0), 0);
+  return <aside className="usage-detail selection-summary">
+    <div className="ud-head"><div><small className="dim">Selected</small><strong>{items.length} items</strong></div>
+      <div className="ud-head-actions"><button className="icon-button" aria-label="Clear selection" onClick={clear}><X size={14} /></button></div></div>
+    <p className="ss-total"><strong>{bytes(total)}</strong> <span className="dim">· {files.toLocaleString()} files</span></p>
+    <ul className="ss-list">{rows.map(({k, n}) => <li key={k}>
+      <i style={{background: n ? TYPES[n.k]?.[1] : undefined}} /><span className="mono" title={k}>{k}{n?.k === 'dir' ? '/' : ''}</span><span className="dim">{n ? bytes(n.d) : '—'}</span>
+      <button className="icon-button" aria-label={`Remove ${k} from the selection`} onClick={() => remove(k)}><X size={12} /></button>
+    </li>)}</ul>
+    {del && <button className="button small danger-outline ud-delete" onClick={del}><Trash2 size={12} />Delete {items.length} items…</button>}
+    <p className="dim ud-small">Each item is checked again before anything is deleted; any that can’t go are listed and left alone.</p>
+  </aside>;
+}
+
+/**
+ * The right-click menu: positioned at the pointer and kept inside the window, focus on the first entry, arrow keys
+ * move, Enter runs, Esc / a click elsewhere / scrolling closes it and focus goes back to the item.
+ */
+function ItemMenu({at, count, items, close}: {at: {x: number; y: number}; count: number; close: () => void;
+  items: {icon: React.ElementType; label: string; run: () => void; danger?: boolean}[]}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({left: at.x, top: at.y});
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const {width, height} = el.getBoundingClientRect(), pad = 8;
+    setPos({left: Math.max(pad, Math.min(at.x, window.innerWidth - width - pad)), top: Math.max(pad, Math.min(at.y, window.innerHeight - height - pad))});
+    el.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [at.x, at.y]);
+  useEffect(() => {
+    const away = (e: Event) => { if (!ref.current?.contains(e.target as Node)) close(); };
+    const shut = () => close();
+    window.addEventListener('pointerdown', away, true);
+    window.addEventListener('scroll', shut, true);
+    window.addEventListener('resize', shut);
+    window.addEventListener('blur', shut);
+    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('scroll', shut, true); window.removeEventListener('resize', shut); window.removeEventListener('blur', shut); };
+  }, [close]);
+  const onKey = (e: React.KeyboardEvent) => {
+    const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); buttons[(i + 1) % buttons.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); buttons[(i - 1 + buttons.length) % buttons.length]?.focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); buttons[0]?.focus(); }
+    else if (e.key === 'End') { e.preventDefault(); buttons.at(-1)?.focus(); }
+  };
+  return <div ref={ref} className="item-menu" role="menu" aria-label={count > 1 ? `${count} selected items` : 'Item'} style={pos} onKeyDown={onKey} onContextMenu={e => e.preventDefault()}>
+    {count > 1 && <div className="item-menu-head">{count} selected</div>}
+    {items.map(({icon: Icon, label, run, danger}) => <button key={label} role="menuitem" className={danger ? 'danger' : ''} onClick={() => { close(); run(); }}>
+      <Icon size={13} />{label}
+    </button>)}
   </div>;
 }
