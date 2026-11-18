@@ -391,8 +391,9 @@ export default function UsagePanel({token, now, setupCommand, user}: {token?: st
                 : mode === 'category' ? Object.entries(VERDICTS).map(([k, [text, color]]) => <span key={k}><i style={{background: color}} />{text}</span>)
                 : ['dir', 'file', 'files', 'locked', 'mount'].map(k => <span key={k}><i style={{background: TYPES[k][1]}} />{TYPES[k][0]}</span>)}
               {(() => { const h = hover ? findRel(node, hover.split('/')) : null;
-                return h ? <span className="usage-hover" aria-live="off"><span className="mono">{hover}{h.k === 'dir' ? '/' : ''}</span> {bytes(h.d)} · {node.d ? `${(h.d / node.d * 100).toFixed(1)}%` : ''}{h.f > 1 ? ` · ${h.f.toLocaleString()} files` : ''}{h.m ? ` · ${age(h.m, now)}` : ''}{h.t && cats?.[h.t] ? ` · ${cats[h.t].label}` : ''}</span>
-                  : <span className="dim usage-hint">Area is space on disk · double-click a folder to open it</span>; })()}
+                // A fixed-width slot whose path truncates and stats never do: the line never re-wraps as the pointer moves.
+                return h ? <span className="usage-status usage-hover" aria-live="off" title={hover + (h.k === 'dir' ? '/' : '')}><span className="mono">{hover}{h.k === 'dir' ? '/' : ''}</span><span className="uh-stats">{bytes(h.d)}{node.d ? ` · ${(h.d / node.d * 100).toFixed(1)}%` : ''}{h.f > 1 ? ` · ${h.f.toLocaleString()} files` : ''}{h.m ? ` · ${age(h.m, now)}` : ''}{h.t && cats?.[h.t] ? ` · ${cats[h.t].label}` : ''}</span></span>
+                  : <span className="dim usage-status usage-hint">Area is space on disk · double-click a folder to open it</span>; })()}
             </div>
           </div>
           {mount && (picked.length > 1
